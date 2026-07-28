@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@theme {
+  --color-felt-light: #3f9d55;
+  --color-felt: #2e7d43;
+  --color-felt-dark: #1c5a2d;
+  --color-rail: #241f1c;
+  --color-gold: #f0b429;
+  --font-display: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-display);
+  color: #f4f4f5;
+  background-color: #0f1218;
+  /* subtle pattern, like the old Zynga background */
+  background-image: radial-gradient(circle at 50% 0%, #22304a 0%, #0f1218 55%),
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 14px);
+  overflow: hidden;
+}
+
+/* ---- Table ---- */
+.felt {
+  background: radial-gradient(ellipse at 50% 35%, var(--color-felt-light) 0%, var(--color-felt) 45%, var(--color-felt-dark) 100%);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55), inset 0 6px 18px rgba(255, 255, 255, 0.12);
+}
+
+.rail {
+  background: linear-gradient(180deg, #4a3b31 0%, #241f1c 45%, #120f0e 100%);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.65), inset 0 2px 3px rgba(255, 255, 255, 0.18);
+}
+
+/* ---- Cards ---- */
+.card-back {
+  background: repeating-linear-gradient(45deg, #b3202b 0 6px, #8e1721 6px 12px);
+  box-shadow: inset 0 0 0 2px #fff, 0 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+.card-face {
+  background: linear-gradient(180deg, #ffffff 0%, #e9edf2 100%);
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+}
+
+.chip-ring {
+  box-shadow: 0 0 0 3px var(--color-gold), 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+.glow-turn {
+  box-shadow: 0 0 0 3px #7ee787, 0 0 22px rgba(126, 231, 135, 0.6);
+}
