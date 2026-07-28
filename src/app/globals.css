@@ -68,9 +68,18 @@ body {
 }
 
 /* Emblem sunk into the felt, the way the old table carried its logo. */
+/* Engraving: the dark shape is the recess, the lip sits one pixel below it and
+   catches the light, so the mark reads as stamped into the cloth. */
 .felt-emblem {
-  opacity: 0.055;
-  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.12));
+  position: relative;
+  color: #06210f;
+  opacity: 0.34;
+}
+
+.felt-emblem-lip {
+  color: #bdf0cf;
+  opacity: 0.16;
+  transform: translateY(2px);
 }
 
 /* ---- Cards ---- */

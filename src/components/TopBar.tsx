@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import LogoMark from "./LogoMark";
 
 interface Props {
   roomName: string;
@@ -46,7 +47,7 @@ export default function TopBar({ roomName, deckName, playerCount, connected }: P
   return (
     <header className="flex h-14 items-center justify-between border-b border-black/60 bg-gradient-to-b from-[#2b3140] to-[#171b24] px-4 shadow-lg">
       <div className="flex items-center gap-3">
-        <span className="text-2xl">🃏</span>
+        <LogoMark className="h-7 w-7 shrink-0 text-[#e9453c]" />
         <div className="leading-none">
           <span className="text-xl font-extrabold tracking-tight text-red-500">planning</span>
           <span className="text-xl font-extrabold tracking-tight text-white">poker</span>
