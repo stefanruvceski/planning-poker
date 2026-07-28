@@ -58,4 +58,14 @@ Not done yet, in the order the owner wants them:
 
 ## Deployment
 
-Vercel, framework auto-detected, no `vercel.json` needed. The only manual step is adding the two `NEXT_PUBLIC_*` environment variables in the project settings, since `.env.local` is gitignored. Nothing to configure on the Supabase side — the browser talks to Supabase directly, Vercel only serves static JS.
+Vercel, framework auto-detected, no `vercel.json` needed. Nothing to configure on the Supabase side — the browser talks to Supabase directly, Vercel only serves static JS.
+
+- Repo: `stefanruvceski/planning-poker` (private)
+- Vercel project: `stefans-projects-1fea5cda/planning-poker`
+- Production: https://planning-poker-hazel-chi.vercel.app
+
+Both `NEXT_PUBLIC_*` variables are already set in the Vercel project for production, preview and development — `.env.local` is gitignored, so they have to live there separately. `.env.example` lists the names.
+
+Vercel refuses to build a Next.js version with a known advisory, which is why the pin is on the latest maintained 15.x rather than the 15.1 line. Keep that in mind before downgrading.
+
+Git integration (auto-deploy on push) is **not** connected yet: the Vercel GitHub App needs access to the private repo, granted at https://github.com/apps/vercel/installations/new. Until then, deploys are manual via `vercel --prod`.
