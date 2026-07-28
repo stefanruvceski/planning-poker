@@ -25,8 +25,9 @@ export default function RoomPage() {
     setReady(true);
   }, [roomId]);
 
-  const { players, revealed, showResults, story, myVote, connected, canControl, facilitatorId, vote, reveal, reset, setStory } =
-    useRoom(roomId, me);
+  const deck = getDeck(ROOM_CONFIG.deckId);
+  const { players, revealed, showResults, story, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory } =
+    useRoom(roomId, me, deck);
 
   const join = (data: { name: string; role: PlayerRole; avatarSeed: string }) => {
     const identity: Identity = { ...data, id: crypto.randomUUID(), joinedAt: Date.now() };
@@ -34,7 +35,6 @@ export default function RoomPage() {
     setMe(identity);
   };
 
-  const deck = getDeck(ROOM_CONFIG.deckId);
   const room: RoomState = useMemo(
     () => ({ id: roomId, name: ROOM_CONFIG.name, deckId: ROOM_CONFIG.deckId, story, revealed, players }),
     [roomId, story, revealed, players]
@@ -52,6 +52,7 @@ export default function RoomPage() {
           canControl={canControl}
           showResults={showResults}
           facilitatorId={facilitatorId}
+          winnerIds={winnerIds}
           onReveal={reveal}
           onReset={reset}
           onStory={setStory}

@@ -43,6 +43,8 @@ Route is already parameterised: `/room/anything` is its own independent channel,
 
 **Chip colour must not encode the vote before the reveal.** Every stack on the felt uses `chip-hidden` while the round is open; `chipTone()` only picks a denomination colour once `showResults` is true. Colouring by value earlier would let anyone read the estimates off the table and defeat the hidden vote above.
 
+**The pot is never settled on a partial round.** `REVEAL_SETTLE_TIMEOUT_MS` opens the table when a straggler is slow, but `settlePot` must wait for `awaitingVotes` to be false. Paying out on whichever votes happened to have arrived hands chips to the wrong player — the average moves the moment the last vote lands. The award is also guarded by `rev`, persisted to `sessionStorage`, because otherwise a refresh during a revealed round pays the same pot twice. Both of these were live bugs, not hypotheticals.
+
 **Spectators never count.** Not in the average, not in the "x / y voted" counter. That is the whole point of the role (typically the PM).
 
 **The spectator is the facilitator.** Only they can edit the story, reveal, and start a new round; the people estimating only estimate. Fallback: if the room has no spectator at all, the longest-seated player (the one with the star) takes over the controls, otherwise the table would be stuck forever.
@@ -52,6 +54,25 @@ Route is already parameterised: `/room/anything` is its own independent channel,
 **One presence key is one player.** Supabase can keep several refs under a key while a superseded one expires, so the sync handler takes the last ref per key instead of flattening them. Flattening seats the same person twice and trips React's duplicate-key warning.
 
 **Round convergence uses a Lamport counter.** Every round change carries `rev`, and the highest `rev` wins. This is what keeps clients in sync when two people act at the same moment, and what lets a late joiner catch up through presence. Editing the story bumps `rev` too, but must NOT clear votes — only a flip of `revealed` does that.
+
+## The chip game
+
+Every reveal settles a pot: one chip per real estimate, taken by whoever landed
+closest to the average, split evenly on a tie. `?` and `☕` are not estimates, so
+they neither ante nor play. The running total sits on each name plate where the
+old table kept the chip count, and the leader wears a crown.
+
+Nobody arbitrates. Every client runs `settlePot` over the same votes at the same
+moment and reaches the same answer, then adjusts **only its own** counter and
+publishes it through presence. That is why there is no new message type — and
+why a client that somehow disagreed could not corrupt anybody else's tally.
+
+Note that with exactly two estimators every round is a tie, because the mean of
+two numbers is equidistant from both. The game only gets interesting from three
+people up.
+
+Totals live in `sessionStorage`, so they survive a refresh but not a closed tab.
+There is no "end of planning" event; the tally simply stands.
 
 ## State of play
 

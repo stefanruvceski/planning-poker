@@ -1,9 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { getDeck } from "@/config/decks";
 import { computeStats } from "@/lib/stats";
-import type { RoomState } from "@/lib/types";
+import type { Player, RoomState } from "@/lib/types";
 import ChipStack, { chipTone } from "./ChipStack";
 import FeltEmblem from "./FeltEmblem";
 import PlayingCard from "./PlayingCard";
@@ -23,6 +24,8 @@ interface Props {
   showResults: boolean;
   /** Whose seat carries the dealer button. */
   facilitatorId: string;
+  /** Who takes this round's pot. */
+  winnerIds: string[];
   onReveal: () => void;
   onReset: () => void;
   onStory: (text: string) => void;
@@ -49,12 +52,29 @@ function seatPositions(count: number) {
   });
 }
 
+/** Which winner's seat a given stack is pushed to; ties share the stacks out. */
+function payoutSeat(
+  ordered: Player[],
+  pos: ReturnType<typeof seatPositions>,
+  winnerIds: string[],
+  i: number
+) {
+  if (!winnerIds.length) return null;
+  const idx = ordered.findIndex((p) => p.id === winnerIds[i % winnerIds.length]);
+  return idx < 0 ? null : pos[idx].seat;
+}
+
+/** Cards flip, then the bets are gathered, then the pot is pushed to the winner. */
+const GATHER_AFTER_MS = 450;
+const PAY_AFTER_MS = 1500;
+
 export default function PokerTable({
   room,
   meId,
   canControl,
   showResults,
   facilitatorId,
+  winnerIds,
   onReveal,
   onReset,
   onStory,
@@ -65,6 +85,25 @@ export default function PokerTable({
   const meIndex = room.players.findIndex((p) => p.id === meId);
   const ordered = meIndex > 0 ? [...room.players.slice(meIndex), ...room.players.slice(0, meIndex)] : room.players;
   const pos = seatPositions(ordered.length);
+
+  // Nobody wears the crown while the whole table is still on zero.
+  const topChips = Math.max(0, ...ordered.map((p) => p.chips));
+  const leaderIds = topChips > 0 ? ordered.filter((p) => p.chips === topChips).map((p) => p.id) : [];
+
+  const [phase, setPhase] = useState<"bet" | "pot" | "payout">("bet");
+
+  useEffect(() => {
+    if (!showResults) {
+      setPhase("bet");
+      return;
+    }
+    const gather = setTimeout(() => setPhase("pot"), GATHER_AFTER_MS);
+    const pay = setTimeout(() => setPhase("payout"), PAY_AFTER_MS);
+    return () => {
+      clearTimeout(gather);
+      clearTimeout(pay);
+    };
+  }, [showResults]);
 
   return (
     <div className="relative aspect-[16/8.5] h-full w-auto max-h-full max-w-full">
@@ -140,40 +179,44 @@ export default function PokerTable({
         </div>
       </div>
 
-      {/* Cards on the felt, with the bet each player pushed in */}
-      {ordered.map((p, i) => {
-        if (p.role === "spectator") return null;
-
-        // Chips slide in along the line from the seat to the card, so the stack
-        // reads as pushed onto the felt by its own player.
-        const dx = pos[i].seat.x - pos[i].card.x;
-        const dy = pos[i].seat.y - pos[i].card.y;
-        const len = Math.hypot(dx, dy) || 1;
-        const from = { x: (dx / len) * 44, y: (dy / len) * 44 };
-
-        return (
+      {/* Cards on the felt */}
+      {ordered.map((p, i) =>
+        p.role === "spectator" ? null : (
           <div
             key={`c-${p.id}`}
             className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${pos[i].card.x}%`, top: `${pos[i].card.y}%` }}
           >
-            <div className="relative">
-              <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
-              <AnimatePresence>
-                {p.hasVoted && (
-                  <div className="absolute -left-6 bottom-0">
-                    <ChipStack
-                      tone={showResults ? chipTone(deck, p.vote) : "chip-hidden"}
-                      from={from}
-                      jitter={(p.id.charCodeAt(0) % 3) - 1}
-                    />
-                  </div>
-                )}
-              </AnimatePresence>
-            </div>
+            <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
           </div>
-        );
-      })}
+        )
+      )}
+
+      {/* The bets. Own layer, so a stack can travel from its card to the pot and
+          on to the winner in one coordinate space. */}
+      <AnimatePresence>
+        {ordered.map((p, i) => {
+          if (p.role === "spectator" || !p.hasVoted) return null;
+
+          const winnerSeat = payoutSeat(ordered, pos, winnerIds, i);
+          const at =
+            phase === "bet" || !winnerSeat
+              ? { x: pos[i].card.x - 5, y: pos[i].card.y + 2 }
+              : phase === "pot"
+                ? { x: 50 + ((i % 3) - 1) * 2.5, y: 66 + ((i % 2) - 0.5) * 3 }
+                : winnerSeat;
+
+          return (
+            <ChipStack
+              key={`chips-${p.id}`}
+              tone={showResults ? chipTone(deck, p.vote) : "chip-hidden"}
+              at={at}
+              jitter={(p.id.charCodeAt(0) % 3) - 1}
+              faded={phase === "payout"}
+            />
+          );
+        })}
+      </AnimatePresence>
 
       {/* Seats */}
       {ordered.map((p, i) => (
@@ -187,6 +230,8 @@ export default function PokerTable({
             isMe={p.id === meId}
             isDealer={p.id === facilitatorId}
             showResults={showResults}
+            isLeader={leaderIds.includes(p.id)}
+            wonRound={phase === "payout" && winnerIds.includes(p.id)}
           />
         </div>
       ))}

@@ -11,6 +11,8 @@ export interface Player {
   hasVoted: boolean;
   /** Null until cards are revealed - the value is never broadcast before that */
   vote: string | null;
+  /** Chips won across the planning, self-reported (see settlePot) */
+  chips: number;
   isHost?: boolean;
 }
 

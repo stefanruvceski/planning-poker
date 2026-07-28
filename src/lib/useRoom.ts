@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import type { Deck } from "@/config/decks";
+import { settlePot } from "./scoring";
+import { computeStats } from "./stats";
 import { supabase } from "./supabase";
 import type { Player, PlayerRole } from "./types";
 
@@ -18,6 +21,8 @@ interface Presence extends Identity {
   hasVoted: boolean;
   /** Stays null until the round is revealed - the value never leaves the browser before that. */
   vote: string | null;
+  /** Chips won so far. Each client only ever changes its own - see the award effect. */
+  chips: number;
   /** Lamport counter: highest rev wins, so every client converges on the same round. */
   rev: number;
   revealed: boolean;
@@ -38,26 +43,50 @@ interface Round {
  */
 const REVEAL_SETTLE_TIMEOUT_MS = 3000;
 
-export function useRoom(roomId: string, me: Identity | null) {
+/** Chips outlive a refresh, the way the seat does. */
+const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
+/** And so does the round they were last paid for, or reloading pays twice. */
+const paidKey = (roomId: string) => `pp:${roomId}:paidRev`;
+
+export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [story, setStoryState] = useState("");
   const [myVote, setMyVote] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
+  const [winnerIds, setWinnerIds] = useState<string[]>([]);
 
   const channel = useRef<RealtimeChannel | null>(null);
+  /** Round the pot was last paid for, so it is never settled twice. */
+  const paidRev = useRef(-1);
   // Kept in a ref, not state: handlers run outside React's render cycle.
-  const local = useRef<{ vote: string | null } & Round>({ vote: null, rev: 0, revealed: false, story: "" });
+  const local = useRef<{ vote: string | null; chips: number } & Round>({
+    vote: null,
+    chips: 0,
+    rev: 0,
+    revealed: false,
+    story: "",
+  });
+
+  // Read the running total back before the first publish, so a refresh mid
+  // planning does not quietly reset the player to zero.
+  useEffect(() => {
+    const saved = Number(sessionStorage.getItem(chipsKey(roomId)));
+    if (Number.isFinite(saved) && saved > 0) local.current.chips = saved;
+    const paid = Number(sessionStorage.getItem(paidKey(roomId)));
+    if (Number.isFinite(paid)) paidRev.current = paid;
+  }, [roomId]);
 
   /** Publish my current presence payload. */
   const push = useCallback(() => {
     const ch = channel.current;
     if (!ch || !me) return;
-    const { vote, rev, revealed: isRevealed, story: currentStory } = local.current;
+    const { vote, chips, rev, revealed: isRevealed, story: currentStory } = local.current;
     const payload: Presence = {
       ...me,
       hasVoted: vote !== null,
       vote: isRevealed ? vote : null,
+      chips,
       rev,
       revealed: isRevealed,
       story: currentStory,
@@ -107,6 +136,7 @@ export function useRoom(roomId: string, me: Identity | null) {
           role: r.role,
           hasVoted: r.hasVoted,
           vote: r.vote,
+          chips: r.chips ?? 0,
           // whoever has been at the table longest wears the host star
           isHost: r.id === rows[0]?.id,
         }))
@@ -184,6 +214,40 @@ export function useRoom(roomId: string, me: Identity | null) {
   const showResults = revealed && (!awaitingVotes || settleTimedOut);
 
   /**
+   * Settle the pot the moment the round is whole. Every client runs the same
+   * calculation over the same votes, so they all pick the same winners without
+   * another message on the wire - and each one only ever moves its own counter,
+   * so a client that somehow disagreed could not corrupt anybody else's total.
+   *
+   * Guarded by rev, or a re-render would pay the pot out twice.
+   */
+  useEffect(() => {
+    if (!showResults || !me) {
+      setWinnerIds([]);
+      return;
+    }
+    const { winners, each } = settlePot(players, deck, computeStats(players, deck).average);
+    setWinnerIds(winners);
+
+    // Never settle on a partial round. The timeout above opens the table when a
+    // straggler is slow, but the pot must wait for the real vote set - paying
+    // out on the votes that happened to have arrived hands chips to the wrong
+    // player, and the average moves the moment the last one lands. When it does,
+    // this effect runs again and pays properly.
+    if (awaitingVotes) return;
+
+    if (paidRev.current === local.current.rev) return;
+    paidRev.current = local.current.rev;
+    sessionStorage.setItem(paidKey(roomId), String(paidRev.current));
+
+    if (winners.includes(me.id)) {
+      local.current.chips += each;
+      sessionStorage.setItem(chipsKey(roomId), String(local.current.chips));
+      push();
+    }
+  }, [showResults, awaitingVotes, players, deck, me, roomId, push]);
+
+  /**
    * Only the spectator runs the session (reveal / new round / story) - the
    * people estimating just estimate. If nobody joined as a spectator the table
    * would be stuck, so the longest-seated player takes over instead.
@@ -210,6 +274,8 @@ export function useRoom(roomId: string, me: Identity | null) {
     connected,
     canControl,
     facilitatorId,
+    /** Who takes this round's pot - drives the payout animation. */
+    winnerIds,
     vote,
     reveal: useCallback(() => publishRound({ revealed: true }), [publishRound]),
     reset: useCallback(() => publishRound({ revealed: false }), [publishRound]),
