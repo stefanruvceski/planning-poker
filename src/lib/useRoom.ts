@@ -192,6 +192,13 @@ export function useRoom(roomId: string, me: Identity | null) {
   const canControl =
     !!me && (me.role === "spectator" || (spectatorCount === 0 && players[0]?.id === me.id));
 
+  /**
+   * Whose seat the dealer button sits on. Control itself stays with every
+   * spectator, as above - this only picks the one seat to badge, so a table
+   * with two spectators does not sprout two dealers.
+   */
+  const facilitatorId = players.find((p) => p.role === "spectator")?.id ?? players[0]?.id ?? "";
+
   return {
     players,
     /** Round state: locks voting the moment the facilitator flips it. */
@@ -202,6 +209,7 @@ export function useRoom(roomId: string, me: Identity | null) {
     myVote,
     connected,
     canControl,
+    facilitatorId,
     vote,
     reveal: useCallback(() => publishRound({ revealed: true }), [publishRound]),
     reset: useCallback(() => publishRound({ revealed: false }), [publishRound]),

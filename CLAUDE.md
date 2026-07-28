@@ -23,12 +23,15 @@ npm run dev        # http://localhost:3210 -> redirects to /room/default
 ## Architecture
 
 ```
-src/config/decks.ts      card decks — edit values here, no UI needed
+src/config/decks.ts      card decks — edit values here, no UI needed. Default is
+                         "days" (<1d, 2d…10d). A label like "3d" is not a number,
+                         so `values` says what each card is worth in the average
+                         and `suffix` puts the unit back on it.
 src/config/avatars.ts    avatar style + seed helpers
 src/config/room.ts       room name + deck id
 src/lib/useRoom.ts       ALL realtime logic (presence + broadcast)
 src/lib/stats.ts         average / consensus, spectators excluded
-src/components/          PokerTable, Seat, PlayingCard, HandDeck, StoryBar, TopBar, JoinModal
+src/components/          PokerTable, Seat, PlayingCard, ChipStack, FeltEmblem, HandDeck, StoryBar, TopBar, JoinModal
 src/app/room/[roomId]/   the table
 ```
 
@@ -37,6 +40,8 @@ Route is already parameterised: `/room/anything` is its own independent channel,
 ## Rules that must not regress
 
 **A vote never leaves the browser before the reveal.** The presence payload carries `hasVoted: true` but `vote: null`; only when the round is revealed does each client re-publish its payload with the value. Do not "simplify" this by always sending the vote and hiding it in the UI — that would let anyone read other people's votes off the WebSocket.
+
+**Chip colour must not encode the vote before the reveal.** Every stack on the felt uses `chip-hidden` while the round is open; `chipTone()` only picks a denomination colour once `showResults` is true. Colouring by value earlier would let anyone read the estimates off the table and defeat the hidden vote above.
 
 **Spectators never count.** Not in the average, not in the "x / y voted" counter. That is the whole point of the role (typically the PM).
 

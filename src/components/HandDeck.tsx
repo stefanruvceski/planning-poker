@@ -33,7 +33,7 @@ export default function HandDeck({ deck, myVote, disabled, spectator, onPick }: 
             whileHover={disabled ? undefined : { y: -14 }}
             animate={{ y: selected ? -14 : 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className={`card-face flex h-[68px] w-12 items-center justify-center rounded-lg text-lg font-bold text-slate-900 disabled:opacity-40 ${
+            className={`card-face flex h-[74px] w-[52px] items-center justify-center rounded-lg text-base font-bold text-slate-900 disabled:opacity-40 ${
               selected ? "shadow-[0_0_0_3px_var(--color-gold)]" : ""
             }`}
           >

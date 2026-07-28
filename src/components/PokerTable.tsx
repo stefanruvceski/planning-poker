@@ -1,8 +1,11 @@
 "use client";
 
+import { AnimatePresence } from "framer-motion";
 import { getDeck } from "@/config/decks";
 import { computeStats } from "@/lib/stats";
 import type { RoomState } from "@/lib/types";
+import ChipStack, { chipTone } from "./ChipStack";
+import FeltEmblem from "./FeltEmblem";
 import PlayingCard from "./PlayingCard";
 import Seat from "./Seat";
 import StoryBar from "./StoryBar";
@@ -18,6 +21,8 @@ interface Props {
    * instead of card by card as the payloads trickle in.
    */
   showResults: boolean;
+  /** Whose seat carries the dealer button. */
+  facilitatorId: string;
   onReveal: () => void;
   onReset: () => void;
   onStory: (text: string) => void;
@@ -44,8 +49,18 @@ function seatPositions(count: number) {
   });
 }
 
-export default function PokerTable({ room, meId, canControl, showResults, onReveal, onReset, onStory }: Props) {
-  const stats = computeStats(room.players, getDeck(room.deckId));
+export default function PokerTable({
+  room,
+  meId,
+  canControl,
+  showResults,
+  facilitatorId,
+  onReveal,
+  onReset,
+  onStory,
+}: Props) {
+  const deck = getDeck(room.deckId);
+  const stats = computeStats(room.players, deck);
 
   const meIndex = room.players.findIndex((p) => p.id === meId);
   const ordered = meIndex > 0 ? [...room.players.slice(meIndex), ...room.players.slice(0, meIndex)] : room.players;
@@ -56,12 +71,14 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
       {/* Rail + felt: stadium shape, like a real poker table */}
       <div className="rail absolute inset-x-[7%] inset-y-[14%] rounded-full p-3">
         <div className="felt relative flex h-full w-full items-center justify-center rounded-full">
+          <FeltEmblem />
+
           {/* Table centre */}
-          <div className="flex flex-col items-center gap-2 text-center">
+          <div className="relative flex flex-col items-center gap-2 text-center">
             <StoryBar story={room.story ?? ""} editable={canControl} onChange={onStory} />
 
             {room.revealed && !showResults ? (
-              <div className="rounded-full bg-black/25 px-5 py-2 text-sm text-white/70">
+              <div className="table-label rounded-full bg-black/30 px-5 py-2 text-sm text-white/75">
                 Revealing…
               </div>
             ) : !room.revealed ? (
@@ -70,16 +87,16 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
                   <button
                     onClick={onReveal}
                     disabled={stats.votedCount === 0}
-                    className="rounded-full bg-gold px-7 py-2.5 text-base font-extrabold text-black shadow-lg transition hover:brightness-110 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
+                    className="btn-gloss btn-gold rounded-full px-7 py-2.5 text-base font-extrabold disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     Reveal cards
                   </button>
                 ) : (
-                  <div className="rounded-full bg-black/25 px-5 py-2 text-sm text-white/70">
+                  <div className="table-label rounded-full bg-black/30 px-5 py-2 text-sm text-white/75">
                     Waiting for the facilitator…
                   </div>
                 )}
-                <div className="text-xs text-white/70">
+                <div className="table-label text-xs text-white/75">
                   {stats.votedCount} / {stats.totalPlayers} voted
                 </div>
               </>
@@ -87,12 +104,19 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
               <>
                 <div className="flex items-end gap-6">
                   <div>
-                    <div className="text-[11px] uppercase tracking-wide text-white/60">Average</div>
-                    <div className="text-3xl font-extrabold text-gold">{stats.average ?? "—"}</div>
+                    <div className="table-label text-[11px] uppercase tracking-wide text-white/60">
+                      Average
+                    </div>
+                    <div className="table-label text-3xl font-extrabold text-gold">
+                      {stats.average !== null ? `${stats.average}${deck.suffix ?? ""}` : "—"}
+                    </div>
                   </div>
                   <div className="flex gap-1.5 pb-1">
                     {stats.distribution.map(([value, n]) => (
-                      <div key={value} className="rounded bg-black/40 px-2 py-1 text-center">
+                      <div
+                        key={value}
+                        className="rounded bg-black/45 px-2 py-1 text-center shadow-[inset_0_1px_0_rgba(255,255,255,.12)]"
+                      >
                         <div className="text-sm font-bold">{value}</div>
                         <div className="text-[10px] text-white/60">×{n}</div>
                       </div>
@@ -100,12 +124,12 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
                   </div>
                 </div>
                 {stats.consensus && (
-                  <div className="text-sm font-bold text-emerald-300">🎉 Consensus!</div>
+                  <div className="table-label text-sm font-bold text-emerald-300">🎉 Consensus!</div>
                 )}
                 {canControl && (
                   <button
                     onClick={onReset}
-                    className="rounded-full bg-white/90 px-6 py-2 text-sm font-bold text-black shadow transition hover:bg-white active:scale-95"
+                    className="btn-gloss btn-cream rounded-full px-6 py-2 text-sm font-bold"
                   >
                     New round
                   </button>
@@ -116,18 +140,40 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
         </div>
       </div>
 
-      {/* Cards on the felt */}
-      {ordered.map((p, i) =>
-        p.role === "spectator" ? null : (
+      {/* Cards on the felt, with the bet each player pushed in */}
+      {ordered.map((p, i) => {
+        if (p.role === "spectator") return null;
+
+        // Chips slide in along the line from the seat to the card, so the stack
+        // reads as pushed onto the felt by its own player.
+        const dx = pos[i].seat.x - pos[i].card.x;
+        const dy = pos[i].seat.y - pos[i].card.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const from = { x: (dx / len) * 44, y: (dy / len) * 44 };
+
+        return (
           <div
             key={`c-${p.id}`}
             className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${pos[i].card.x}%`, top: `${pos[i].card.y}%` }}
           >
-            <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
+            <div className="relative">
+              <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
+              <AnimatePresence>
+                {p.hasVoted && (
+                  <div className="absolute -left-6 bottom-0">
+                    <ChipStack
+                      tone={showResults ? chipTone(deck, p.vote) : "chip-hidden"}
+                      from={from}
+                      jitter={(p.id.charCodeAt(0) % 3) - 1}
+                    />
+                  </div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
-        )
-      )}
+        );
+      })}
 
       {/* Seats */}
       {ordered.map((p, i) => (
@@ -136,7 +182,12 @@ export default function PokerTable({ room, meId, canControl, showResults, onReve
           className="absolute -translate-x-1/2 -translate-y-1/2"
           style={{ left: `${pos[i].seat.x}%`, top: `${pos[i].seat.y}%` }}
         >
-          <Seat player={p} isMe={p.id === meId} />
+          <Seat
+            player={p}
+            isMe={p.id === meId}
+            isDealer={p.id === facilitatorId}
+            showResults={showResults}
+          />
         </div>
       ))}
     </div>

@@ -12,7 +12,8 @@ interface Props {
 
 /** Card on the table: face down until reveal, then flips to its value. */
 export default function PlayingCard({ value, revealed, hasVoted, size = "sm" }: Props) {
-  const dims = size === "sm" ? "w-11 h-16 text-xl" : "w-14 h-20 text-2xl";
+  // Wide enough for a three-character label like "<1d" without shrinking it.
+  const dims = size === "sm" ? "w-14 h-[76px] text-base" : "w-16 h-[92px] text-xl";
 
   if (!hasVoted) {
     return (

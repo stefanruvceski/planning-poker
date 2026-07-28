@@ -17,7 +17,11 @@ export function computeStats(players: Player[], deck: Deck): VoteStats {
   const voters = votingPlayers(players);
   const votes = voters.map((p) => p.vote).filter((v): v is string => v !== null);
   const nonNumeric = new Set(deck.nonNumeric ?? []);
-  const numeric = votes.filter((v) => !nonNumeric.has(v)).map(Number).filter((n) => !Number.isNaN(n));
+  const numeric = votes
+    .filter((v) => !nonNumeric.has(v))
+    // A label like "3d" is not a number, so the deck says what it is worth.
+    .map((v) => deck.values?.[v] ?? Number(v))
+    .filter((n) => !Number.isNaN(n));
 
   const counts = new Map<string, number>();
   votes.forEach((v) => counts.set(v, (counts.get(v) ?? 0) + 1));

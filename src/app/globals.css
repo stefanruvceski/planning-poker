@@ -6,6 +6,7 @@
   --color-felt-dark: #1c5a2d;
   --color-rail: #241f1c;
   --color-gold: #f0b429;
+  --color-brass: #c4964a;
   --font-display: "Trebuchet MS", "Segoe UI", system-ui, sans-serif;
 }
 
@@ -17,39 +18,191 @@ body {
 body {
   font-family: var(--font-display);
   color: #f4f4f5;
-  background-color: #0f1218;
-  /* subtle pattern, like the old Zynga background */
-  background-image: radial-gradient(circle at 50% 0%, #22304a 0%, #0f1218 55%),
+  background-color: #0b0d12;
+  /* The dim room the table sits in: a pool of light above it, heavy vignette
+     at the edges, and a faint weave so the dark is not a flat fill. */
+  background-image: radial-gradient(ellipse at 50% -10%, #2a3a55 0%, #141a26 40%, #0b0d12 75%),
     repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 14px);
   overflow: hidden;
 }
 
 /* ---- Table ---- */
 .felt {
-  background: radial-gradient(ellipse at 50% 35%, var(--color-felt-light) 0%, var(--color-felt) 45%, var(--color-felt-dark) 100%);
+  /* Felt weave over the green, so it reads as cloth instead of a gradient. */
+  background-image: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.05) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 35%, var(--color-felt-light) 0%, var(--color-felt) 45%, var(--color-felt-dark) 100%);
   box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55), inset 0 6px 18px rgba(255, 255, 255, 0.12);
 }
 
+/* Stitched seam where the cloth meets the rail. */
+.felt::before {
+  content: "";
+  position: absolute;
+  inset: 7px;
+  border-radius: 9999px;
+  border: 1.5px dashed rgba(255, 219, 150, 0.16);
+  pointer-events: none;
+}
+
 .rail {
-  background: linear-gradient(180deg, #4a3b31 0%, #241f1c 45%, #120f0e 100%);
-  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.65), inset 0 2px 3px rgba(255, 255, 255, 0.18);
+  background: linear-gradient(180deg, #5c483a 0%, #3a2e26 35%, #241f1c 62%, #120f0e 100%);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.72), inset 0 0 0 1px rgba(196, 150, 74, 0.32);
+  border-radius: 9999px;
+}
+
+/* Specular sweep along the top of the rail - the thing that makes the wood
+   look turned rather than drawn. */
+.rail::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 9999px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 236, 200, 0.34) 0%,
+    rgba(255, 226, 180, 0.1) 9%,
+    transparent 26%
+  );
+  pointer-events: none;
+}
+
+/* Emblem sunk into the felt, the way the old table carried its logo. */
+.felt-emblem {
+  opacity: 0.055;
+  filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.12));
 }
 
 /* ---- Cards ---- */
 .card-back {
-  background: repeating-linear-gradient(45deg, #b3202b 0 6px, #8e1721 6px 12px);
-  box-shadow: inset 0 0 0 2px #fff, 0 3px 8px rgba(0, 0, 0, 0.5);
+  background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.17) 0 2px, transparent 2px 7px),
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.17) 0 2px, transparent 2px 7px),
+    linear-gradient(180deg, #c02b36 0%, #8e1721 100%);
+  box-shadow: inset 0 0 0 2px #fff, inset 0 0 0 3px rgba(0, 0, 0, 0.3), 0 3px 8px rgba(0, 0, 0, 0.5);
 }
 
 .card-face {
   background: linear-gradient(180deg, #ffffff 0%, #e9edf2 100%);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.5);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18), 0 3px 10px rgba(0, 0, 0, 0.5);
 }
 
+/* ---- Seats ---- */
 .chip-ring {
-  box-shadow: 0 0 0 3px var(--color-gold), 0 4px 12px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 3px var(--color-brass), 0 0 0 4px rgba(0, 0, 0, 0.55), 0 4px 12px rgba(0, 0, 0, 0.6);
 }
 
 .glow-turn {
   box-shadow: 0 0 0 3px #7ee787, 0 0 22px rgba(126, 231, 135, 0.6);
+}
+
+/* Name plate: dark glass in a brass frame, gold line underneath - the old
+   "name on top, chip count below" rhythm. */
+.name-plate {
+  background: linear-gradient(180deg, #2b303b 0%, #12151c 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 2px 6px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(196, 150, 74, 0.55);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+.name-plate-me {
+  background: linear-gradient(180deg, #f6cf5f 0%, #c8901d 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55), 0 2px 6px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(120, 84, 10, 0.75);
+}
+
+/* Dealer button - the facilitator is the dealer. */
+.dealer-button {
+  background: radial-gradient(circle at 35% 28%, #ffffff 0%, #e9ebef 55%, #b6bbc4 100%);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.7), inset 0 0 0 1.5px rgba(0, 0, 0, 0.22);
+}
+
+/* ---- Chips ---- */
+.chip {
+  --chip-body: #b9c0cc;
+  --chip-edge: #7d8698;
+  position: relative;
+  height: 20px;
+  width: 20px;
+  border-radius: 9999px;
+  background: repeating-conic-gradient(var(--chip-edge) 0deg 20deg, var(--chip-body) 20deg 40deg);
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.chip::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 9999px;
+  background: var(--chip-body);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4), inset 0 -2px 3px rgba(0, 0, 0, 0.25);
+}
+
+/* Every stack looks the same until the reveal - the colour must never leak
+   how high somebody voted. */
+.chip-hidden {
+  --chip-body: #b9c0cc;
+  --chip-edge: #7d8698;
+}
+.chip-white {
+  --chip-body: #eaeff6;
+  --chip-edge: #98a4b6;
+}
+.chip-red {
+  --chip-body: #d33f4a;
+  --chip-edge: #8e1f28;
+}
+.chip-green {
+  --chip-body: #2f9e57;
+  --chip-edge: #17663a;
+}
+.chip-black {
+  --chip-body: #2b2f38;
+  --chip-edge: #0b0e13;
+}
+.chip-purple {
+  --chip-body: #7b52c7;
+  --chip-edge: #46277d;
+}
+
+/* ---- Buttons ---- */
+.btn-gloss {
+  background: linear-gradient(180deg, var(--btn-top) 0%, var(--btn-bottom) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), 0 3px 0 var(--btn-edge), 0 7px 16px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.28);
+  transition: filter 0.15s, transform 0.08s;
+}
+
+.btn-gloss:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4), 0 1px 0 var(--btn-edge), 0 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+.btn-gloss:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.btn-gold {
+  --btn-top: #f8cf5c;
+  --btn-bottom: #d99b16;
+  --btn-edge: #8f6209;
+  color: #2a1d02;
+}
+
+.btn-cream {
+  --btn-top: #ffffff;
+  --btn-bottom: #dde2ea;
+  --btn-edge: #98a0ad;
+  color: #12151c;
+}
+
+.btn-felt {
+  --btn-top: #3aa15c;
+  --btn-bottom: #1f7038;
+  --btn-edge: #124a24;
+  color: #f2fff6;
+}
+
+/* ---- Type ---- */
+.table-label {
+  text-shadow: 0 2px 3px rgba(0, 0, 0, 0.75);
 }
