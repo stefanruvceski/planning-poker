@@ -25,7 +25,7 @@ export default function RoomPage() {
     setReady(true);
   }, [roomId]);
 
-  const { players, revealed, story, myVote, connected, canControl, vote, reveal, reset, setStory } =
+  const { players, revealed, showResults, story, myVote, connected, canControl, vote, reveal, reset, setStory } =
     useRoom(roomId, me);
 
   const join = (data: { name: string; role: PlayerRole; avatarSeed: string }) => {
@@ -50,6 +50,7 @@ export default function RoomPage() {
           room={room}
           meId={me?.id ?? ""}
           canControl={canControl}
+          showResults={showResults}
           onReveal={reveal}
           onReset={reset}
           onStory={setStory}

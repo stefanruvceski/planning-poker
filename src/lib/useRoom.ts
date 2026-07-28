@@ -31,6 +31,13 @@ interface Round {
   story: string;
 }
 
+/**
+ * How long the table waits for the last vote to land before showing the round
+ * anyway. A client that froze between the flip and its re-publish must not hold
+ * everyone else hostage.
+ */
+const REVEAL_SETTLE_TIMEOUT_MS = 3000;
+
 export function useRoom(roomId: string, me: Identity | null) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [revealed, setRevealed] = useState(false);
@@ -86,7 +93,10 @@ export function useRoom(roomId: string, me: Identity | null) {
     channel.current = ch;
 
     ch.on("presence", { event: "sync" }, () => {
-      const rows = Object.values(ch.presenceState<Presence>()).flat();
+      // One key is one player, but Supabase can hold several refs under it
+      // while a superseded one expires - flattening those would seat the same
+      // person twice. The last ref is the current payload.
+      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
       rows.sort((a, b) => a.joinedAt - b.joinedAt);
 
       setPlayers(
@@ -152,6 +162,28 @@ export function useRoom(roomId: string, me: Identity | null) {
   );
 
   /**
+   * The reveal has to land as one event. Each client re-publishes its own vote
+   * only once the round flips, so the values arrive one payload at a time; if
+   * the table rendered them as they came, the cards would turn one by one and
+   * the average would jump with every arrival. So we hold the whole result back
+   * until every player who voted has published a value - or until the timeout
+   * gives up on a straggler.
+   */
+  const awaitingVotes = players.some((p) => p.role === "player" && p.hasVoted && p.vote === null);
+  const [settleTimedOut, setSettleTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (!revealed) {
+      setSettleTimedOut(false);
+      return;
+    }
+    const timer = setTimeout(() => setSettleTimedOut(true), REVEAL_SETTLE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [revealed]);
+
+  const showResults = revealed && (!awaitingVotes || settleTimedOut);
+
+  /**
    * Only the spectator runs the session (reveal / new round / story) - the
    * people estimating just estimate. If nobody joined as a spectator the table
    * would be stuck, so the longest-seated player takes over instead.
@@ -162,7 +194,10 @@ export function useRoom(roomId: string, me: Identity | null) {
 
   return {
     players,
+    /** Round state: locks voting the moment the facilitator flips it. */
     revealed,
+    /** Display gate: true only once the whole round can be shown at once. */
+    showResults,
     story,
     myVote,
     connected,

@@ -42,6 +42,10 @@ Route is already parameterised: `/room/anything` is its own independent channel,
 
 **The spectator is the facilitator.** Only they can edit the story, reveal, and start a new round; the people estimating only estimate. Fallback: if the room has no spectator at all, the longest-seated player (the one with the star) takes over the controls, otherwise the table would be stuck forever.
 
+**The reveal is atomic.** Because each client only re-publishes its vote after the round flips, the values arrive one payload at a time. `useRoom` therefore exposes two flags: `revealed` (round state — locks voting immediately) and `showResults` (every voter's value has landed). Cards and the average are driven by `showResults` only; wiring them back to `revealed` would make the table turn card by card and the average jump with each arrival. A stuck client can't hold the table forever — `REVEAL_SETTLE_TIMEOUT_MS` shows whatever arrived after 3s.
+
+**One presence key is one player.** Supabase can keep several refs under a key while a superseded one expires, so the sync handler takes the last ref per key instead of flattening them. Flattening seats the same person twice and trips React's duplicate-key warning.
+
 **Round convergence uses a Lamport counter.** Every round change carries `rev`, and the highest `rev` wins. This is what keeps clients in sync when two people act at the same moment, and what lets a late joiner catch up through presence. Editing the story bumps `rev` too, but must NOT clear votes — only a flip of `revealed` does that.
 
 ## State of play

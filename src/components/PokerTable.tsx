@@ -12,6 +12,12 @@ interface Props {
   meId: string;
   /** True only for the facilitator - the spectator running the session. */
   canControl: boolean;
+  /**
+   * The round is revealed AND every vote has arrived. Cards and numbers are
+   * driven by this, never by room.revealed, so the table turns in one go
+   * instead of card by card as the payloads trickle in.
+   */
+  showResults: boolean;
   onReveal: () => void;
   onReset: () => void;
   onStory: (text: string) => void;
@@ -38,7 +44,7 @@ function seatPositions(count: number) {
   });
 }
 
-export default function PokerTable({ room, meId, canControl, onReveal, onReset, onStory }: Props) {
+export default function PokerTable({ room, meId, canControl, showResults, onReveal, onReset, onStory }: Props) {
   const stats = computeStats(room.players, getDeck(room.deckId));
 
   const meIndex = room.players.findIndex((p) => p.id === meId);
@@ -54,7 +60,11 @@ export default function PokerTable({ room, meId, canControl, onReveal, onReset, 
           <div className="flex flex-col items-center gap-2 text-center">
             <StoryBar story={room.story ?? ""} editable={canControl} onChange={onStory} />
 
-            {!room.revealed ? (
+            {room.revealed && !showResults ? (
+              <div className="rounded-full bg-black/25 px-5 py-2 text-sm text-white/70">
+                Revealing…
+              </div>
+            ) : !room.revealed ? (
               <>
                 {canControl ? (
                   <button
@@ -114,7 +124,7 @@ export default function PokerTable({ room, meId, canControl, onReveal, onReset, 
             className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${pos[i].card.x}%`, top: `${pos[i].card.y}%` }}
           >
-            <PlayingCard value={p.vote} revealed={room.revealed} hasVoted={p.hasVoted} />
+            <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
           </div>
         )
       )}
