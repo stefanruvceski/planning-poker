@@ -6,7 +6,7 @@ import HandDeck from "@/components/HandDeck";
 import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
 import TopBar from "@/components/TopBar";
-import { getDeck } from "@/config/decks";
+import { cardHotkey, getDeck } from "@/config/decks";
 import { roomLabel } from "@/config/room";
 import { rememberRoom } from "@/lib/lastRoom";
 import type { PlayerRole, RoomState } from "@/lib/types";
@@ -39,6 +39,43 @@ export default function RoomPage() {
 
   const deck = getDeck(deckId);
   const displayName = roomLabel(roomId);
+
+  // Keyboard shortcuts: number keys vote by card position, Enter/Space runs the
+  // reveal (facilitator), Esc clears your vote. Same functions the buttons call
+  // - nothing new on the wire.
+  useEffect(() => {
+    if (!me || !connected) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      // Don't hijack keys while someone is typing the story.
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || el?.isContentEditable) return;
+
+      if (e.key === "Enter" || e.key === " ") {
+        if (canControl) {
+          e.preventDefault();
+          if (revealed) reset();
+          else reveal();
+        }
+        return;
+      }
+      // Spectators run the table but never vote.
+      if (me.role === "spectator") return;
+      if (e.key === "Escape") {
+        if (myVote) vote(myVote); // toggles the current vote back off
+        return;
+      }
+      if (revealed) return; // voting is closed
+      const idx = deck.cards.findIndex((_, i) => cardHotkey(i) === e.key);
+      if (idx >= 0) {
+        e.preventDefault();
+        vote(deck.cards[idx]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [me, connected, canControl, revealed, myVote, deck, vote, reveal, reset]);
 
   const join = (data: { name: string; role: PlayerRole; avatarSeed: string }) => {
     const identity: Identity = { ...data, id: crypto.randomUUID(), joinedAt: Date.now() };

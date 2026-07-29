@@ -1,7 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
-import type { Deck } from "@/config/decks";
+import { cardHotkey, type Deck } from "@/config/decks";
 
 interface Props {
   deck: Deck;
@@ -25,8 +25,9 @@ export default function HandDeck({ deck, myVote, disabled, spectator, onPick }: 
     // A full deck is wider than a phone, so the hand scrolls sideways there and
     // just centres on a wide screen.
     <div className="flex h-24 items-end justify-start gap-1.5 overflow-x-auto px-3 pb-4 sm:h-28 sm:justify-center sm:gap-2 sm:pb-5">
-      {deck.cards.map((c) => {
+      {deck.cards.map((c, i) => {
         const selected = myVote === c;
+        const hotkey = cardHotkey(i);
         return (
           <motion.button
             key={c}
@@ -35,10 +36,15 @@ export default function HandDeck({ deck, myVote, disabled, spectator, onPick }: 
             whileHover={disabled ? undefined : { y: -14 }}
             animate={{ y: selected ? -14 : 0 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}
-            className={`card-face flex h-[58px] w-[42px] shrink-0 items-center justify-center rounded-lg text-sm font-bold text-slate-900 disabled:opacity-40 sm:h-[74px] sm:w-[52px] sm:text-base ${
+            className={`card-face relative flex h-[58px] w-[42px] shrink-0 items-center justify-center rounded-lg text-sm font-bold text-slate-900 disabled:opacity-40 sm:h-[74px] sm:w-[52px] sm:text-base ${
               selected ? "shadow-[0_0_0_3px_var(--color-gold)]" : ""
             }`}
           >
+            {hotkey && (
+              <span className="pointer-events-none absolute left-1 top-0.5 text-[9px] font-semibold text-slate-400">
+                {hotkey}
+              </span>
+            )}
             {c}
           </motion.button>
         );
