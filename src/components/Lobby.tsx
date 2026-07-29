@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import LogoMark from "@/components/LogoMark";
+import { DECK_LIST, DEFAULT_DECK_ID } from "@/config/decks";
 import { roomLabel, slugifyRoom, TEAM_ROOMS } from "@/config/room";
 import { readLastRoom } from "@/lib/lastRoom";
 import { usePresenceCounts } from "@/lib/usePresenceCounts";
@@ -26,10 +27,16 @@ function HereBadge({ count }: { count: number }) {
  * tables are listed by name with a live head count, there's a one-click way
  * back to the last table you sat at, and anyone can spin up a one-off table by
  * typing a name. The slug is the whole room - no state to create server-side.
+ *
+ * The deck picker up top applies to whichever table you open - team table, a
+ * new one, or a jump-back - so you set the cards here and every link carries
+ * them. (Once you're at a table with others, the shared deck wins; ?deck= only
+ * seeds a fresh one.)
  */
 export default function Lobby() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
   const counts = usePresenceCounts(TEAM_IDS);
 
   // localStorage is only there on the client, so read it after mount to keep
@@ -38,11 +45,15 @@ export default function Lobby() {
   useEffect(() => setLastRoom(readLastRoom()), []);
 
   const slug = slugifyRoom(name);
+  // The chosen deck rides along in the URL of every link; the default is left
+  // off to keep the common link clean.
+  const deckQuery = deckId !== DEFAULT_DECK_ID ? `?deck=${deckId}` : "";
+  const withDeck = (path: string) => `${path}${deckQuery}`;
 
   const create = (e: React.FormEvent) => {
     e.preventDefault();
     if (!slug) return;
-    router.push(`/room/${slug}`);
+    router.push(withDeck(`/room/${slug}`));
   };
 
   return (
@@ -57,9 +68,27 @@ export default function Lobby() {
       </header>
 
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 shadow-2xl">
+        <div className="mb-5 rounded-lg border border-white/10 bg-black/40 px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-sm font-semibold text-white/70">Deck</span>
+            <select
+              value={deckId}
+              onChange={(e) => setDeckId(e.target.value)}
+              className="cursor-pointer rounded-md border border-white/10 bg-[#1b202b] px-2 py-1 text-sm font-semibold text-white outline-none focus:border-gold"
+            >
+              {DECK_LIST.map((deck) => (
+                <option key={deck.id} value={deck.id}>
+                  {deck.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p className="mt-1 text-[11px] text-white/35">Applies to whichever table you open below.</p>
+        </div>
+
         {lastRoom && (
           <Link
-            href={`/room/${lastRoom}`}
+            href={withDeck(`/room/${lastRoom}`)}
             className="mb-5 flex items-center justify-between rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 transition hover:bg-gold/20"
           >
             <span className="flex flex-col leading-tight">
@@ -78,7 +107,7 @@ export default function Lobby() {
           {TEAM_ROOMS.map((room) => (
             <li key={room.id}>
               <Link
-                href={`/room/${room.id}`}
+                href={withDeck(`/room/${room.id}`)}
                 className="group flex items-center justify-between rounded-lg border border-white/5 bg-black/30 px-4 py-3 transition hover:border-gold/60 hover:bg-black/50"
               >
                 <span className="flex items-center gap-3">
@@ -112,7 +141,7 @@ export default function Lobby() {
           />
           {slug && (
             <p className="text-center text-[11px] text-white/35">
-              opens <span className="text-white/60">/room/{slug}</span>
+              opens <span className="text-white/60">/room/{slug}{deckQuery}</span>
             </p>
           )}
           <button

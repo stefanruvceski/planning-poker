@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { AnimatePresence } from "framer-motion";
-import { getDeck } from "@/config/decks";
+import { DECK_LIST, getDeck } from "@/config/decks";
 import { computeStats } from "@/lib/stats";
 import type { Player, RoomState } from "@/lib/types";
 import ChipStack, { chipTone } from "./ChipStack";
@@ -29,6 +29,28 @@ interface Props {
   onReveal: () => void;
   onReset: () => void;
   onStory: (text: string) => void;
+  /** Facilitator switches the deck; every table converges on it. */
+  onDeck: (deckId: string) => void;
+}
+
+/** Facilitator-only deck switch, shown before the reveal. */
+function DeckPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+  return (
+    <label className="flex items-center gap-2 rounded-full bg-black/35 px-3 py-1 text-xs text-white/75">
+      <span className="uppercase tracking-wide text-white/50">Deck</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="cursor-pointer rounded-md border border-white/15 bg-[#1b202b] px-2 py-0.5 font-semibold text-white outline-none focus:border-gold"
+      >
+        {DECK_LIST.map((d) => (
+          <option key={d.id} value={d.id}>
+            {d.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
 }
 
 /**
@@ -78,6 +100,7 @@ export default function PokerTable({
   onReveal,
   onReset,
   onStory,
+  onDeck,
 }: Props) {
   const deck = getDeck(room.deckId);
   const stats = computeStats(room.players, deck);
@@ -123,13 +146,16 @@ export default function PokerTable({
             ) : !room.revealed ? (
               <>
                 {canControl ? (
-                  <button
-                    onClick={onReveal}
-                    disabled={stats.votedCount === 0}
-                    className="btn-gloss btn-gold rounded-full px-7 py-2.5 text-base font-extrabold disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    Reveal cards
-                  </button>
+                  <>
+                    <DeckPicker value={room.deckId} onChange={onDeck} />
+                    <button
+                      onClick={onReveal}
+                      disabled={stats.votedCount === 0}
+                      className="btn-gloss btn-gold rounded-full px-7 py-2.5 text-base font-extrabold disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      Reveal cards
+                    </button>
+                  </>
                 ) : (
                   <div className="table-label rounded-full bg-black/30 px-5 py-2 text-sm text-white/75">
                     Waiting for the facilitator…

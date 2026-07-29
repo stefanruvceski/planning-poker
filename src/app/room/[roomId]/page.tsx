@@ -7,7 +7,7 @@ import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
 import TopBar from "@/components/TopBar";
 import { getDeck } from "@/config/decks";
-import { ROOM_CONFIG, roomLabel } from "@/config/room";
+import { roomLabel } from "@/config/room";
 import { rememberRoom } from "@/lib/lastRoom";
 import type { PlayerRole, RoomState } from "@/lib/types";
 import { useRoom, type Identity } from "@/lib/useRoom";
@@ -31,10 +31,14 @@ export default function RoomPage() {
     rememberRoom(roomId);
   }, [roomId]);
 
-  const deck = getDeck(ROOM_CONFIG.deckId);
+  // The deck is part of the shared room state now (the facilitator can switch
+  // it live), so useRoom owns it - it seeds from ?deck= / sessionStorage and
+  // then follows the channel.
+  const { players, revealed, showResults, story, deckId, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck } =
+    useRoom(roomId, me);
+
+  const deck = getDeck(deckId);
   const displayName = roomLabel(roomId);
-  const { players, revealed, showResults, story, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory } =
-    useRoom(roomId, me, deck);
 
   const join = (data: { name: string; role: PlayerRole; avatarSeed: string }) => {
     const identity: Identity = { ...data, id: crypto.randomUUID(), joinedAt: Date.now() };
@@ -43,8 +47,8 @@ export default function RoomPage() {
   };
 
   const room: RoomState = useMemo(
-    () => ({ id: roomId, name: displayName, deckId: ROOM_CONFIG.deckId, story, revealed, players }),
-    [roomId, displayName, story, revealed, players]
+    () => ({ id: roomId, name: displayName, deckId, story, revealed, players }),
+    [roomId, displayName, deckId, story, revealed, players]
   );
 
   return (
@@ -63,6 +67,7 @@ export default function RoomPage() {
           onReveal={reveal}
           onReset={reset}
           onStory={setStory}
+          onDeck={setDeck}
         />
       </div>
 
