@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
-import type { Deck } from "@/config/decks";
+import { DEFAULT_DECK_ID, getDeck, isDeckId } from "@/config/decks";
 import { settlePot } from "./scoring";
 import { computeStats } from "./stats";
 import { supabase } from "./supabase";
@@ -27,6 +27,8 @@ interface Presence extends Identity {
   rev: number;
   revealed: boolean;
   story: string;
+  /** Which deck the table is playing - shared like the story, set by the facilitator. */
+  deckId: string;
 }
 
 interface Round {
@@ -34,6 +36,8 @@ interface Round {
   revealed: boolean;
   /** Set by the facilitator; empty string means "show nothing". */
   story: string;
+  /** The deck in play. Changing it opens a fresh round on the new cards. */
+  deckId: string;
 }
 
 /**
@@ -47,11 +51,14 @@ const REVEAL_SETTLE_TIMEOUT_MS = 3000;
 const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
 /** And so does the round they were last paid for, or reloading pays twice. */
 const paidKey = (roomId: string) => `pp:${roomId}:paidRev`;
+/** The deck sticks per room, so a refresh or a typed URL keeps it. */
+const deckKey = (roomId: string) => `pp:${roomId}:deck`;
 
-export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
+export function useRoom(roomId: string, me: Identity | null) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [story, setStoryState] = useState("");
+  const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
   const [myVote, setMyVote] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [winnerIds, setWinnerIds] = useState<string[]>([]);
@@ -66,22 +73,32 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
     rev: 0,
     revealed: false,
     story: "",
+    deckId: DEFAULT_DECK_ID,
   });
 
   // Read the running total back before the first publish, so a refresh mid
-  // planning does not quietly reset the player to zero.
+  // planning does not quietly reset the player to zero. The deck is resolved
+  // here too: ?deck= from the invite link wins, then the per-room value, then
+  // the default. (Runs on the client, so window/sessionStorage are available.)
   useEffect(() => {
     const saved = Number(sessionStorage.getItem(chipsKey(roomId)));
     if (Number.isFinite(saved) && saved > 0) local.current.chips = saved;
     const paid = Number(sessionStorage.getItem(paidKey(roomId)));
     if (Number.isFinite(paid)) paidRev.current = paid;
+
+    const fromUrl = new URLSearchParams(window.location.search).get("deck");
+    const fromStore = sessionStorage.getItem(deckKey(roomId));
+    const chosen = isDeckId(fromUrl) ? fromUrl : isDeckId(fromStore) ? fromStore : DEFAULT_DECK_ID;
+    local.current.deckId = chosen;
+    setDeckId(chosen);
+    sessionStorage.setItem(deckKey(roomId), chosen);
   }, [roomId]);
 
   /** Publish my current presence payload. */
   const push = useCallback(() => {
     const ch = channel.current;
     if (!ch || !me) return;
-    const { vote, chips, rev, revealed: isRevealed, story: currentStory } = local.current;
+    const { vote, chips, rev, revealed: isRevealed, story: currentStory, deckId: currentDeck } = local.current;
     const payload: Presence = {
       ...me,
       hasVoted: vote !== null,
@@ -90,6 +107,7 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
       rev,
       revealed: isRevealed,
       story: currentStory,
+      deckId: currentDeck,
     };
     void ch.track(payload);
   }, [me]);
@@ -98,19 +116,27 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
   const applyRound = useCallback(
     (next: Round) => {
       const roundChanged = next.revealed !== local.current.revealed;
+      const deckChanged = next.deckId !== local.current.deckId;
       local.current.rev = next.rev;
       local.current.revealed = next.revealed;
       local.current.story = next.story;
-      // Only a round flip clears votes - editing the story must not wipe them.
-      if (roundChanged && !next.revealed) {
+      local.current.deckId = next.deckId;
+      // Votes clear when the round opens - and also when the deck changes, since
+      // a "3d" vote is meaningless on a T-shirt deck. Editing the story does
+      // neither, so it never wipes votes.
+      if ((roundChanged && !next.revealed) || deckChanged) {
         local.current.vote = null;
         setMyVote(null);
       }
       setRevealed(next.revealed);
       setStoryState(next.story);
+      if (deckChanged) {
+        setDeckId(next.deckId);
+        sessionStorage.setItem(deckKey(roomId), next.deckId);
+      }
       push();
     },
-    [push]
+    [push, roomId]
   );
 
   useEffect(() => {
@@ -145,7 +171,7 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
       // A late joiner (or someone who missed a broadcast) catches up here.
       const newest = rows.reduce<Round>(
         (best, r) => (r.rev > best.rev ? r : best),
-        { rev: -1, revealed: false, story: "" }
+        { rev: -1, revealed: false, story: "", deckId: local.current.deckId }
       );
       if (newest.rev > local.current.rev) applyRound(newest);
     });
@@ -173,6 +199,7 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
         rev: local.current.rev + 1,
         revealed: local.current.revealed,
         story: local.current.story,
+        deckId: local.current.deckId,
         ...patch,
       };
       applyRound(next);
@@ -190,6 +217,8 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
     },
     [push]
   );
+
+  const deck = getDeck(deckId);
 
   /**
    * The reveal has to land as one event. Each client re-publishes its own vote
@@ -270,6 +299,8 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
     /** Display gate: true only once the whole round can be shown at once. */
     showResults,
     story,
+    /** The deck currently in play - the source of truth is the channel. */
+    deckId,
     myVote,
     connected,
     canControl,
@@ -280,5 +311,7 @@ export function useRoom(roomId: string, me: Identity | null, deck: Deck) {
     reveal: useCallback(() => publishRound({ revealed: true }), [publishRound]),
     reset: useCallback(() => publishRound({ revealed: false }), [publishRound]),
     setStory: useCallback((text: string) => publishRound({ story: text }), [publishRound]),
+    /** Facilitator picks the deck; it opens a fresh round on the new cards. */
+    setDeck: useCallback((id: string) => publishRound({ deckId: id, revealed: false }), [publishRound]),
   };
 }

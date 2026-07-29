@@ -6,7 +6,7 @@ import HandDeck from "@/components/HandDeck";
 import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
 import TopBar from "@/components/TopBar";
-import { DEFAULT_DECK_ID, getDeck, isDeckId } from "@/config/decks";
+import { getDeck } from "@/config/decks";
 import { roomLabel } from "@/config/room";
 import { rememberRoom } from "@/lib/lastRoom";
 import type { PlayerRole, RoomState } from "@/lib/types";
@@ -31,23 +31,14 @@ export default function RoomPage() {
     rememberRoom(roomId);
   }, [roomId]);
 
-  // Which deck this table plays with. It rides in on ?deck= (put there by the
-  // lobby's create form and carried in the invite link), then sticks per room
-  // in sessionStorage so a refresh or a manually typed URL keeps it.
-  const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
-  useEffect(() => {
-    const storeKey = `pp:${roomId}:deck`;
-    const fromUrl = new URLSearchParams(window.location.search).get("deck");
-    const fromStore = sessionStorage.getItem(storeKey);
-    const chosen = isDeckId(fromUrl) ? fromUrl : isDeckId(fromStore) ? fromStore : DEFAULT_DECK_ID;
-    setDeckId(chosen);
-    sessionStorage.setItem(storeKey, chosen);
-  }, [roomId]);
+  // The deck is part of the shared room state now (the facilitator can switch
+  // it live), so useRoom owns it - it seeds from ?deck= / sessionStorage and
+  // then follows the channel.
+  const { players, revealed, showResults, story, deckId, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck } =
+    useRoom(roomId, me);
 
   const deck = getDeck(deckId);
   const displayName = roomLabel(roomId);
-  const { players, revealed, showResults, story, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory } =
-    useRoom(roomId, me, deck);
 
   const join = (data: { name: string; role: PlayerRole; avatarSeed: string }) => {
     const identity: Identity = { ...data, id: crypto.randomUUID(), joinedAt: Date.now() };
@@ -76,6 +67,7 @@ export default function RoomPage() {
           onReveal={reveal}
           onReset={reset}
           onStory={setStory}
+          onDeck={setDeck}
         />
       </div>
 
