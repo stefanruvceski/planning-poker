@@ -154,6 +154,8 @@ export default function PokerTable({
 }: Props) {
   const deck = getDeck(room.deckId);
   const stats = computeStats(room.players, deck);
+  // Everyone who can vote has - the cue for the facilitator to reveal.
+  const allVoted = stats.totalPlayers > 0 && stats.votedCount === stats.totalPlayers;
 
   const meIndex = room.players.findIndex((p) => p.id === meId);
   const ordered = meIndex > 0 ? [...room.players.slice(meIndex), ...room.players.slice(0, meIndex)] : room.players;
@@ -212,7 +214,9 @@ export default function PokerTable({
                     <button
                       onClick={onReveal}
                       disabled={stats.votedCount === 0}
-                      className="btn-gloss btn-gold rounded-full px-5 py-2 text-sm font-extrabold disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2.5 sm:text-base"
+                      className={`btn-gloss btn-gold rounded-full px-5 py-2 text-sm font-extrabold disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2.5 sm:text-base ${
+                        allVoted ? "reveal-ready" : ""
+                      }`}
                     >
                       Reveal cards
                     </button>
@@ -222,8 +226,13 @@ export default function PokerTable({
                     Waiting for the facilitator…
                   </div>
                 )}
-                <div className="table-label text-xs text-white/75">
+                <div
+                  className={`table-label text-xs ${
+                    allVoted ? "font-bold text-emerald-300" : "text-white/75"
+                  }`}
+                >
                   {stats.votedCount} / {stats.totalPlayers} voted
+                  {allVoted && " — all in!"}
                 </div>
               </>
             ) : (
