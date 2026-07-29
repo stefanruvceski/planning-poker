@@ -71,3 +71,12 @@ export const getDeck = (id: string): Deck => DECKS[id] ?? DECKS[DEFAULT_DECK_ID]
 /** True when `id` names a real deck, so URL/stored ids can be trusted. */
 export const isDeckId = (id: string | null | undefined): id is string =>
   !!id && id in DECKS;
+
+/**
+ * Keyboard key that votes the card at this position in the hand: 1-9 for the
+ * first nine, 0 for the tenth, and nothing beyond (the `?`/`☕` tail stays
+ * mouse-only). Shared by the hand's hints and the room's key handler so the
+ * two never drift apart.
+ */
+export const cardHotkey = (index: number): string | null =>
+  index < 9 ? String(index + 1) : index === 9 ? "0" : null;
