@@ -227,3 +227,29 @@ body {
 .table-label {
   text-shadow: 0 2px 3px rgba(0, 0, 0, 0.75);
 }
+
+/* Reveal button nudge: once everyone has voted, a gold ring breathes outward.
+   Uses outline (not box-shadow) so it never fights the button's raised look. */
+@keyframes reveal-ready {
+  0%,
+  100% {
+    outline-color: rgba(240, 180, 41, 0);
+    outline-offset: 2px;
+  }
+  50% {
+    outline-color: rgba(240, 180, 41, 0.9);
+    outline-offset: 5px;
+  }
+}
+
+.reveal-ready {
+  outline: 3px solid rgba(240, 180, 41, 0);
+  animation: reveal-ready 1.15s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal-ready {
+    animation: none;
+    outline-color: rgba(240, 180, 41, 0.9);
+  }
+}
