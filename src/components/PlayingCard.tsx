@@ -13,7 +13,11 @@ interface Props {
 /** Card on the table: face down until reveal, then flips to its value. */
 export default function PlayingCard({ value, revealed, hasVoted, size = "sm" }: Props) {
   // Wide enough for a three-character label like "<1d" without shrinking it.
-  const dims = size === "sm" ? "w-14 h-[76px] text-base" : "w-16 h-[92px] text-xl";
+  // The table (size "sm") scales down on a phone so cards don't crowd the seats.
+  const dims =
+    size === "sm"
+      ? "w-9 h-[52px] text-xs sm:w-14 sm:h-[76px] sm:text-base"
+      : "w-16 h-[92px] text-xl";
 
   if (!hasVoted) {
     return (

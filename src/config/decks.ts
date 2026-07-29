@@ -63,4 +63,11 @@ export const DECKS: Record<string, Deck> = {
 /** Deck used by the default table */
 export const DEFAULT_DECK_ID = "days";
 
+/** Every deck, in insertion order - for the "create table" picker. */
+export const DECK_LIST: Deck[] = Object.values(DECKS);
+
 export const getDeck = (id: string): Deck => DECKS[id] ?? DECKS[DEFAULT_DECK_ID];
+
+/** True when `id` names a real deck, so URL/stored ids can be trusted. */
+export const isDeckId = (id: string | null | undefined): id is string =>
+  !!id && id in DECKS;

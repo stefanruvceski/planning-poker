@@ -21,19 +21,19 @@ export default function Seat({ player, isMe, isDealer, showResults, isLeader, wo
   const spectator = player.role === "spectator";
 
   return (
-    <div className="flex w-28 flex-col items-center">
+    <div className="flex w-16 flex-col items-center sm:w-28">
       <div className="relative">
         <img
           src={avatarUrl(player.avatarSeed)}
           alt={player.name}
-          className={`h-16 w-16 rounded-full object-cover ${
+          className={`h-11 w-11 rounded-full object-cover sm:h-16 sm:w-16 ${
             spectator ? "opacity-60 shadow-[0_0_0_3px_#64748b]" : "chip-ring"
           } ${player.hasVoted && !spectator ? "glow-turn" : ""}`}
         />
         {isDealer && (
           <span
             title="Dealer - runs the round"
-            className="dealer-button absolute -right-2 -top-1 flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-black text-slate-900"
+            className="dealer-button absolute -right-1.5 -top-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-black text-slate-900 sm:h-6 sm:w-6 sm:text-[11px]"
           >
             D
           </span>
