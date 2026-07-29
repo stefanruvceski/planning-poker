@@ -9,9 +9,12 @@ interface Props {
   deckName: string;
   playerCount: number;
   connected: boolean;
+  /** How many stories the session has estimated - drives the recap button. */
+  recapCount: number;
+  onShowRecap: () => void;
 }
 
-export default function TopBar({ roomName, deckName, playerCount, connected }: Props) {
+export default function TopBar({ roomName, deckName, playerCount, connected, recapCount, onShowRecap }: Props) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -65,15 +68,26 @@ export default function TopBar({ roomName, deckName, playerCount, connected }: P
         </span>
       </div>
 
-      <button
-        onClick={invite}
-        aria-live="polite"
-        className={`min-w-[104px] rounded-md px-3 py-1.5 text-sm font-bold shadow transition active:scale-95 ${
-          copied ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
-        }`}
-      >
-        {copied ? "Link copied ✓" : "Invite team"}
-      </button>
+      <div className="flex items-center gap-2">
+        {recapCount > 0 && (
+          <button
+            onClick={onShowRecap}
+            className="rounded-md bg-black/40 px-3 py-1.5 text-sm font-bold text-white/85 shadow transition hover:bg-black/60 active:scale-95"
+            title="Session recap"
+          >
+            📋 <span className="hidden sm:inline">Recap</span> {recapCount}
+          </button>
+        )}
+        <button
+          onClick={invite}
+          aria-live="polite"
+          className={`min-w-[104px] rounded-md px-3 py-1.5 text-sm font-bold shadow transition active:scale-95 ${
+            copied ? "bg-emerald-500" : "bg-emerald-600 hover:bg-emerald-500"
+          }`}
+        >
+          {copied ? "Link copied ✓" : "Invite team"}
+        </button>
+      </div>
     </header>
   );
 }

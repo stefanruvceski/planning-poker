@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import HandDeck from "@/components/HandDeck";
 import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
+import RecapModal from "@/components/RecapModal";
 import TopBar from "@/components/TopBar";
 import { cardHotkey, getDeck } from "@/config/decks";
 import { roomLabel } from "@/config/room";
@@ -34,11 +35,12 @@ export default function RoomPage() {
   // The deck is part of the shared room state now (the facilitator can switch
   // it live), so useRoom owns it - it seeds from ?deck= / sessionStorage and
   // then follows the channel.
-  const { players, revealed, showResults, story, deckId, deadline, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck, startTimer, cancelTimer } =
+  const { players, revealed, showResults, story, deckId, deadline, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck, startTimer, cancelTimer, recap, clearRecap } =
     useRoom(roomId, me);
 
   const deck = getDeck(deckId);
   const displayName = roomLabel(roomId);
+  const [recapOpen, setRecapOpen] = useState(false);
 
   // Keyboard shortcuts: number keys vote by card position, Enter/Space runs the
   // reveal (facilitator), Esc clears your vote. Same functions the buttons call
@@ -90,7 +92,14 @@ export default function RoomPage() {
 
   return (
     <main className="flex h-screen flex-col">
-      <TopBar roomName={room.name} deckName={deck.name} playerCount={players.length} connected={connected} />
+      <TopBar
+        roomName={room.name}
+        deckName={deck.name}
+        playerCount={players.length}
+        connected={connected}
+        recapCount={recap.length}
+        onShowRecap={() => setRecapOpen(true)}
+      />
 
       {/* Padding leaves room for the seats that hang over the table edge - tight
           on a phone so the table itself gets as much width as possible. */}
@@ -121,6 +130,15 @@ export default function RoomPage() {
       />
 
       {ready && !me && <JoinModal roomName={displayName} onJoin={join} />}
+
+      {recapOpen && (
+        <RecapModal
+          roomName={displayName}
+          entries={recap}
+          onClose={() => setRecapOpen(false)}
+          onClear={clearRecap}
+        />
+      )}
     </main>
   );
 }

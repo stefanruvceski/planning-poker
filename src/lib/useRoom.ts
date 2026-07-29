@@ -16,6 +16,19 @@ export interface Identity {
   joinedAt: number;
 }
 
+/** One estimated story, logged when its round is revealed - the session recap. */
+export interface RecapEntry {
+  /** The round's rev, so a refresh never logs the same round twice. */
+  rev: number;
+  story: string;
+  /** Formatted estimate like "5d", or "—" when there were no numeric votes. */
+  estimate: string;
+  consensus: boolean;
+  /** [value, count], the same breakdown the table shows. */
+  distribution: [string, number][];
+  at: number;
+}
+
 /** What every client publishes about itself into the channel. */
 interface Presence extends Identity {
   hasVoted: boolean;
@@ -57,6 +70,8 @@ const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
 const paidKey = (roomId: string) => `pp:${roomId}:paidRev`;
 /** The deck sticks per room, so a refresh or a typed URL keeps it. */
 const deckKey = (roomId: string) => `pp:${roomId}:deck`;
+/** The session recap of estimated stories, kept per room like the chips. */
+const recapKey = (roomId: string) => `pp:${roomId}:recap`;
 
 export function useRoom(roomId: string, me: Identity | null) {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -67,10 +82,13 @@ export function useRoom(roomId: string, me: Identity | null) {
   const [myVote, setMyVote] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [winnerIds, setWinnerIds] = useState<string[]>([]);
+  const [recap, setRecap] = useState<RecapEntry[]>([]);
 
   const channel = useRef<RealtimeChannel | null>(null);
   /** Round the pot was last paid for, so it is never settled twice. */
   const paidRev = useRef(-1);
+  /** Round last written to the recap, so a re-render never logs it twice. */
+  const recapRev = useRef(-1);
   // Kept in a ref, not state: handlers run outside React's render cycle.
   const local = useRef<{ vote: string | null; chips: number } & Round>({
     vote: null,
@@ -91,6 +109,17 @@ export function useRoom(roomId: string, me: Identity | null) {
     if (Number.isFinite(saved) && saved > 0) local.current.chips = saved;
     const paid = Number(sessionStorage.getItem(paidKey(roomId)));
     if (Number.isFinite(paid)) paidRev.current = paid;
+
+    // Read the recap back so a refresh keeps the session's estimated stories.
+    try {
+      const stored = JSON.parse(sessionStorage.getItem(recapKey(roomId)) ?? "[]") as RecapEntry[];
+      if (Array.isArray(stored) && stored.length) {
+        setRecap(stored);
+        recapRev.current = stored[stored.length - 1].rev;
+      }
+    } catch {
+      // Corrupt entry - start the recap fresh rather than throwing.
+    }
 
     const fromUrl = new URLSearchParams(window.location.search).get("deck");
     const fromStore = sessionStorage.getItem(deckKey(roomId));
@@ -238,6 +267,13 @@ export function useRoom(roomId: string, me: Identity | null) {
   );
   const cancelTimer = useCallback(() => publishRound({ deadline: null }), [publishRound]);
 
+  /** Wipe the session recap. Only clears this client's copy of the log. */
+  const clearRecap = useCallback(() => {
+    recapRev.current = local.current.rev; // don't re-log the round on screen now
+    setRecap([]);
+    sessionStorage.removeItem(recapKey(roomId));
+  }, [roomId]);
+
   const deck = getDeck(deckId);
 
   /**
@@ -275,7 +311,8 @@ export function useRoom(roomId: string, me: Identity | null) {
       setWinnerIds([]);
       return;
     }
-    const { winners, each } = settlePot(players, deck, computeStats(players, deck).average);
+    const stats = computeStats(players, deck);
+    const { winners, each } = settlePot(players, deck, stats.average);
     setWinnerIds(winners);
 
     // Never settle on a partial round. The timeout above opens the table when a
@@ -284,6 +321,26 @@ export function useRoom(roomId: string, me: Identity | null) {
     // player, and the average moves the moment the last one lands. When it does,
     // this effect runs again and pays properly.
     if (awaitingVotes) return;
+
+    // Log this revealed round to the session recap, once per round (like the
+    // pot). Every client computes the same stats, so each keeps an identical
+    // local copy - no new message on the wire.
+    if (recapRev.current !== local.current.rev) {
+      recapRev.current = local.current.rev;
+      const entry: RecapEntry = {
+        rev: local.current.rev,
+        story: local.current.story,
+        estimate: stats.average !== null ? `${stats.average}${deck.suffix ?? ""}` : "—",
+        consensus: stats.consensus,
+        distribution: stats.distribution,
+        at: Date.now(),
+      };
+      setRecap((prev) => {
+        const next = [...prev, entry];
+        sessionStorage.setItem(recapKey(roomId), JSON.stringify(next));
+        return next;
+      });
+    }
 
     if (paidRev.current === local.current.rev) return;
     paidRev.current = local.current.rev;
@@ -355,5 +412,9 @@ export function useRoom(roomId: string, me: Identity | null) {
     startTimer,
     /** Facilitator stops a running countdown without revealing. */
     cancelTimer,
+    /** Every story estimated this session, oldest first. */
+    recap,
+    /** Wipe this client's session recap. */
+    clearRecap,
   };
 }
