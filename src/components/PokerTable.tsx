@@ -136,11 +136,11 @@ export default function PokerTable({
           <FeltEmblem />
 
           {/* Table centre */}
-          <div className="relative flex flex-col items-center gap-2 text-center">
+          <div className="relative flex flex-col items-center gap-1.5 text-center sm:gap-2">
             <StoryBar story={room.story ?? ""} editable={canControl} onChange={onStory} />
 
             {room.revealed && !showResults ? (
-              <div className="table-label rounded-full bg-black/30 px-5 py-2 text-sm text-white/75">
+              <div className="table-label rounded-full bg-black/30 px-4 py-1.5 text-xs text-white/75 sm:px-5 sm:py-2 sm:text-sm">
                 Revealing…
               </div>
             ) : !room.revealed ? (
@@ -151,13 +151,13 @@ export default function PokerTable({
                     <button
                       onClick={onReveal}
                       disabled={stats.votedCount === 0}
-                      className="btn-gloss btn-gold rounded-full px-7 py-2.5 text-base font-extrabold disabled:cursor-not-allowed disabled:opacity-40"
+                      className="btn-gloss btn-gold rounded-full px-5 py-2 text-sm font-extrabold disabled:cursor-not-allowed disabled:opacity-40 sm:px-7 sm:py-2.5 sm:text-base"
                     >
                       Reveal cards
                     </button>
                   </>
                 ) : (
-                  <div className="table-label rounded-full bg-black/30 px-5 py-2 text-sm text-white/75">
+                  <div className="table-label rounded-full bg-black/30 px-4 py-1.5 text-xs text-white/75 sm:px-5 sm:py-2 sm:text-sm">
                     Waiting for the facilitator…
                   </div>
                 )}
@@ -167,16 +167,16 @@ export default function PokerTable({
               </>
             ) : (
               <>
-                <div className="flex items-end gap-6">
+                <div className="flex items-end gap-3 sm:gap-6">
                   <div>
-                    <div className="table-label text-[11px] uppercase tracking-wide text-white/60">
+                    <div className="table-label text-[10px] uppercase tracking-wide text-white/60 sm:text-[11px]">
                       Average
                     </div>
-                    <div className="table-label text-3xl font-extrabold text-gold">
+                    <div className="table-label text-2xl font-extrabold text-gold sm:text-3xl">
                       {stats.average !== null ? `${stats.average}${deck.suffix ?? ""}` : "—"}
                     </div>
                   </div>
-                  <div className="flex gap-1.5 pb-1">
+                  <div className="flex max-w-[45vw] flex-wrap justify-center gap-1.5 pb-1 sm:max-w-none sm:flex-nowrap">
                     {stats.distribution.map(([value, n]) => (
                       <div
                         key={value}
@@ -194,7 +194,7 @@ export default function PokerTable({
                 {canControl && (
                   <button
                     onClick={onReset}
-                    className="btn-gloss btn-cream rounded-full px-6 py-2 text-sm font-bold"
+                    className="btn-gloss btn-cream rounded-full px-5 py-1.5 text-xs font-bold sm:px-6 sm:py-2 sm:text-sm"
                   >
                     New round
                   </button>

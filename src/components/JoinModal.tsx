@@ -27,7 +27,7 @@ export default function JoinModal({ roomName, onJoin }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
       <form
         onSubmit={submit}
-        className="w-[360px] rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 shadow-2xl"
+        className="w-[92vw] max-w-[360px] rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 shadow-2xl"
       >
         <h2 className="text-center text-xl font-extrabold">Take a seat</h2>
         <p className="mt-1 text-center text-xs text-white/50">{roomName}</p>

@@ -55,8 +55,9 @@ export default function RoomPage() {
     <main className="flex h-screen flex-col">
       <TopBar roomName={room.name} deckName={deck.name} playerCount={players.length} connected={connected} />
 
-      {/* Padding leaves room for the seats that hang over the table edge */}
-      <div className="flex min-h-0 flex-1 items-center justify-center px-16 pb-10 pt-12">
+      {/* Padding leaves room for the seats that hang over the table edge - tight
+          on a phone so the table itself gets as much width as possible. */}
+      <div className="flex min-h-0 flex-1 items-center justify-center px-2 pb-4 pt-6 sm:px-16 sm:pb-10 sm:pt-12">
         <PokerTable
           room={room}
           meId={me?.id ?? ""}

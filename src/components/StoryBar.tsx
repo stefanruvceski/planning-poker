@@ -31,7 +31,7 @@ export default function StoryBar({ story, editable, onChange }: Props) {
   if (!editable) {
     if (!story.trim()) return null;
     return (
-      <div className="max-w-md truncate rounded-full bg-black/35 px-4 py-1 text-sm text-white/85">
+      <div className="max-w-[70vw] truncate rounded-full bg-black/35 px-4 py-1 text-xs text-white/85 sm:max-w-md sm:text-sm">
         {story}
       </div>
     );
@@ -48,7 +48,7 @@ export default function StoryBar({ story, editable, onChange }: Props) {
       }}
       maxLength={80}
       placeholder="What are we estimating? (optional)"
-      className="w-80 rounded-full border border-white/15 bg-black/35 px-4 py-1.5 text-center text-sm text-white outline-none transition placeholder:text-white/40 focus:border-gold focus:bg-black/50"
+      className="w-52 rounded-full border border-white/15 bg-black/35 px-4 py-1.5 text-center text-xs text-white outline-none transition placeholder:text-white/40 focus:border-gold focus:bg-black/50 sm:w-80 sm:text-sm"
     />
   );
 }
