@@ -8,6 +8,7 @@ import PokerTable from "@/components/PokerTable";
 import TopBar from "@/components/TopBar";
 import { getDeck } from "@/config/decks";
 import { ROOM_CONFIG, roomLabel } from "@/config/room";
+import { rememberRoom } from "@/lib/lastRoom";
 import type { PlayerRole, RoomState } from "@/lib/types";
 import { useRoom, type Identity } from "@/lib/useRoom";
 
@@ -23,6 +24,11 @@ export default function RoomPage() {
     const raw = sessionStorage.getItem(`pp:${roomId}`);
     if (raw) setMe(JSON.parse(raw) as Identity);
     setReady(true);
+  }, [roomId]);
+
+  // Remember this table so the lobby can offer a one-click way back to it.
+  useEffect(() => {
+    rememberRoom(roomId);
   }, [roomId]);
 
   const deck = getDeck(ROOM_CONFIG.deckId);
