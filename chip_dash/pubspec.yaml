@@ -1,0 +1,19 @@
+name: chip_dash
+description: "A tiny Flutter arcade prototype — a poker chip flapping through the felt."
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  # Persists the high score across sessions on every platform.
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
