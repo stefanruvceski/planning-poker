@@ -7,7 +7,7 @@ import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
 import TopBar from "@/components/TopBar";
 import { getDeck } from "@/config/decks";
-import { ROOM_CONFIG } from "@/config/room";
+import { ROOM_CONFIG, roomLabel } from "@/config/room";
 import type { PlayerRole, RoomState } from "@/lib/types";
 import { useRoom, type Identity } from "@/lib/useRoom";
 
@@ -26,6 +26,7 @@ export default function RoomPage() {
   }, [roomId]);
 
   const deck = getDeck(ROOM_CONFIG.deckId);
+  const displayName = roomLabel(roomId);
   const { players, revealed, showResults, story, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory } =
     useRoom(roomId, me, deck);
 
@@ -36,8 +37,8 @@ export default function RoomPage() {
   };
 
   const room: RoomState = useMemo(
-    () => ({ id: roomId, name: ROOM_CONFIG.name, deckId: ROOM_CONFIG.deckId, story, revealed, players }),
-    [roomId, story, revealed, players]
+    () => ({ id: roomId, name: displayName, deckId: ROOM_CONFIG.deckId, story, revealed, players }),
+    [roomId, displayName, story, revealed, players]
   );
 
   return (
@@ -67,7 +68,7 @@ export default function RoomPage() {
         onPick={vote}
       />
 
-      {ready && !me && <JoinModal roomName={ROOM_CONFIG.name} onJoin={join} />}
+      {ready && !me && <JoinModal roomName={displayName} onJoin={join} />}
     </main>
   );
 }
