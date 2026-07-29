@@ -29,6 +29,8 @@ interface Presence extends Identity {
   story: string;
   /** Which deck the table is playing - shared like the story, set by the facilitator. */
   deckId: string;
+  /** Epoch ms the round auto-reveals at, or null for no timer. Shared like the round. */
+  deadline: number | null;
 }
 
 interface Round {
@@ -38,6 +40,8 @@ interface Round {
   story: string;
   /** The deck in play. Changing it opens a fresh round on the new cards. */
   deckId: string;
+  /** When the voting timer fires (epoch ms), or null when none is running. */
+  deadline: number | null;
 }
 
 /**
@@ -59,6 +63,7 @@ export function useRoom(roomId: string, me: Identity | null) {
   const [revealed, setRevealed] = useState(false);
   const [story, setStoryState] = useState("");
   const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
+  const [deadline, setDeadline] = useState<number | null>(null);
   const [myVote, setMyVote] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [winnerIds, setWinnerIds] = useState<string[]>([]);
@@ -74,6 +79,7 @@ export function useRoom(roomId: string, me: Identity | null) {
     revealed: false,
     story: "",
     deckId: DEFAULT_DECK_ID,
+    deadline: null,
   });
 
   // Read the running total back before the first publish, so a refresh mid
@@ -98,7 +104,7 @@ export function useRoom(roomId: string, me: Identity | null) {
   const push = useCallback(() => {
     const ch = channel.current;
     if (!ch || !me) return;
-    const { vote, chips, rev, revealed: isRevealed, story: currentStory, deckId: currentDeck } = local.current;
+    const { vote, chips, rev, revealed: isRevealed, story: currentStory, deckId: currentDeck, deadline: currentDeadline } = local.current;
     const payload: Presence = {
       ...me,
       hasVoted: vote !== null,
@@ -108,6 +114,7 @@ export function useRoom(roomId: string, me: Identity | null) {
       revealed: isRevealed,
       story: currentStory,
       deckId: currentDeck,
+      deadline: currentDeadline,
     };
     void ch.track(payload);
   }, [me]);
@@ -121,15 +128,17 @@ export function useRoom(roomId: string, me: Identity | null) {
       local.current.revealed = next.revealed;
       local.current.story = next.story;
       local.current.deckId = next.deckId;
+      local.current.deadline = next.deadline;
       // Votes clear when the round opens - and also when the deck changes, since
-      // a "3d" vote is meaningless on a T-shirt deck. Editing the story does
-      // neither, so it never wipes votes.
+      // a "3d" vote is meaningless on a T-shirt deck. Editing the story or the
+      // timer does neither, so neither wipes votes.
       if ((roundChanged && !next.revealed) || deckChanged) {
         local.current.vote = null;
         setMyVote(null);
       }
       setRevealed(next.revealed);
       setStoryState(next.story);
+      setDeadline(next.deadline);
       if (deckChanged) {
         setDeckId(next.deckId);
         sessionStorage.setItem(deckKey(roomId), next.deckId);
@@ -171,7 +180,7 @@ export function useRoom(roomId: string, me: Identity | null) {
       // A late joiner (or someone who missed a broadcast) catches up here.
       const newest = rows.reduce<Round>(
         (best, r) => (r.rev > best.rev ? r : best),
-        { rev: -1, revealed: false, story: "", deckId: local.current.deckId }
+        { rev: -1, revealed: false, story: "", deckId: local.current.deckId, deadline: local.current.deadline }
       );
       if (newest.rev > local.current.rev) applyRound(newest);
     });
@@ -200,6 +209,7 @@ export function useRoom(roomId: string, me: Identity | null) {
         revealed: local.current.revealed,
         story: local.current.story,
         deckId: local.current.deckId,
+        deadline: local.current.deadline,
         ...patch,
       };
       applyRound(next);
@@ -217,6 +227,16 @@ export function useRoom(roomId: string, me: Identity | null) {
     },
     [push]
   );
+
+  // Revealing or opening a new round always stops any running timer.
+  const reveal = useCallback(() => publishRound({ revealed: true, deadline: null }), [publishRound]);
+  const reset = useCallback(() => publishRound({ revealed: false, deadline: null }), [publishRound]);
+  /** Facilitator starts the voting timer; cancel by passing null seconds. */
+  const startTimer = useCallback(
+    (seconds: number) => publishRound({ deadline: Date.now() + seconds * 1000 }),
+    [publishRound]
+  );
+  const cancelTimer = useCallback(() => publishRound({ deadline: null }), [publishRound]);
 
   const deck = getDeck(deckId);
 
@@ -292,6 +312,22 @@ export function useRoom(roomId: string, me: Identity | null) {
    */
   const facilitatorId = players.find((p) => p.role === "spectator")?.id ?? players[0]?.id ?? "";
 
+  /**
+   * When the voting timer lands, only the facilitator's client flips the reveal
+   * - one authority firing it, and reveal clears the deadline so it happens
+   * once. Everyone else just watches their countdown reach zero.
+   */
+  useEffect(() => {
+    if (!canControl || revealed || deadline === null) return;
+    const ms = deadline - Date.now();
+    if (ms <= 0) {
+      reveal();
+      return;
+    }
+    const t = setTimeout(reveal, ms);
+    return () => clearTimeout(t);
+  }, [canControl, revealed, deadline, reveal]);
+
   return {
     players,
     /** Round state: locks voting the moment the facilitator flips it. */
@@ -301,6 +337,8 @@ export function useRoom(roomId: string, me: Identity | null) {
     story,
     /** The deck currently in play - the source of truth is the channel. */
     deckId,
+    /** When the voting timer fires (epoch ms), or null for no timer. */
+    deadline,
     myVote,
     connected,
     canControl,
@@ -308,10 +346,14 @@ export function useRoom(roomId: string, me: Identity | null) {
     /** Who takes this round's pot - drives the payout animation. */
     winnerIds,
     vote,
-    reveal: useCallback(() => publishRound({ revealed: true }), [publishRound]),
-    reset: useCallback(() => publishRound({ revealed: false }), [publishRound]),
+    reveal,
+    reset,
     setStory: useCallback((text: string) => publishRound({ story: text }), [publishRound]),
     /** Facilitator picks the deck; it opens a fresh round on the new cards. */
-    setDeck: useCallback((id: string) => publishRound({ deckId: id, revealed: false }), [publishRound]),
+    setDeck: useCallback((id: string) => publishRound({ deckId: id, revealed: false, deadline: null }), [publishRound]),
+    /** Facilitator starts a countdown that auto-reveals when it hits zero. */
+    startTimer,
+    /** Facilitator stops a running countdown without revealing. */
+    cancelTimer,
   };
 }
