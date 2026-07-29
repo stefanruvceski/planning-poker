@@ -31,6 +31,12 @@ interface Props {
   onStory: (text: string) => void;
   /** Facilitator switches the deck; every table converges on it. */
   onDeck: (deckId: string) => void;
+  /** When the voting timer fires (epoch ms), or null for none. */
+  deadline: number | null;
+  /** Facilitator starts a countdown of this many seconds. */
+  onStartTimer: (seconds: number) => void;
+  /** Facilitator stops a running countdown without revealing. */
+  onCancelTimer: () => void;
 }
 
 /** Facilitator-only deck switch, shown before the reveal. */
@@ -50,6 +56,47 @@ function DeckPicker({ value, onChange }: { value: string; onChange: (id: string)
         ))}
       </select>
     </label>
+  );
+}
+
+const TIMER_PRESETS = [30, 60, 120];
+const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+/** Live countdown to the deadline - everyone sees the same one. Urgent under 10s. */
+function Countdown({ deadline }: { deadline: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, []);
+  const left = Math.max(0, Math.ceil((deadline - now) / 1000));
+  const urgent = left <= 10;
+  return (
+    <div
+      className={`table-label flex items-center gap-1.5 rounded-full px-4 py-1 text-sm font-extrabold tabular-nums sm:text-base ${
+        urgent ? "animate-pulse bg-red-600/80 text-white" : "bg-black/40 text-gold"
+      }`}
+    >
+      ⏱ {fmt(left)}
+    </div>
+  );
+}
+
+/** Facilitator-only presets to start the voting timer. */
+function TimerPresets({ onStart }: { onStart: (seconds: number) => void }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-white/60">
+      <span className="uppercase tracking-wide text-white/40">Timer</span>
+      {TIMER_PRESETS.map((s) => (
+        <button
+          key={s}
+          onClick={() => onStart(s)}
+          className="rounded-full bg-black/35 px-2.5 py-0.5 font-semibold text-white/80 transition hover:bg-black/55 hover:text-white"
+        >
+          {fmt(s)}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -101,6 +148,9 @@ export default function PokerTable({
   onReset,
   onStory,
   onDeck,
+  deadline,
+  onStartTimer,
+  onCancelTimer,
 }: Props) {
   const deck = getDeck(room.deckId);
   const stats = computeStats(room.players, deck);
@@ -145,9 +195,20 @@ export default function PokerTable({
               </div>
             ) : !room.revealed ? (
               <>
+                {deadline !== null && <Countdown deadline={deadline} />}
                 {canControl ? (
                   <>
                     <DeckPicker value={room.deckId} onChange={onDeck} />
+                    {deadline === null ? (
+                      <TimerPresets onStart={onStartTimer} />
+                    ) : (
+                      <button
+                        onClick={onCancelTimer}
+                        className="text-xs text-white/50 underline transition hover:text-white"
+                      >
+                        cancel timer
+                      </button>
+                    )}
                     <button
                       onClick={onReveal}
                       disabled={stats.votedCount === 0}

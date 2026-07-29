@@ -34,7 +34,7 @@ export default function RoomPage() {
   // The deck is part of the shared room state now (the facilitator can switch
   // it live), so useRoom owns it - it seeds from ?deck= / sessionStorage and
   // then follows the channel.
-  const { players, revealed, showResults, story, deckId, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck } =
+  const { players, revealed, showResults, story, deckId, deadline, myVote, connected, canControl, facilitatorId, winnerIds, vote, reveal, reset, setStory, setDeck, startTimer, cancelTimer } =
     useRoom(roomId, me);
 
   const deck = getDeck(deckId);
@@ -69,6 +69,9 @@ export default function RoomPage() {
           onReset={reset}
           onStory={setStory}
           onDeck={setDeck}
+          deadline={deadline}
+          onStartTimer={startTimer}
+          onCancelTimer={cancelTimer}
         />
       </div>
 
