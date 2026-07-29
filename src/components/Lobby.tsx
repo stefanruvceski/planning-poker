@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import LogoMark from "@/components/LogoMark";
+import { DECK_LIST, DEFAULT_DECK_ID } from "@/config/decks";
 import { roomLabel, slugifyRoom, TEAM_ROOMS } from "@/config/room";
 import { readLastRoom } from "@/lib/lastRoom";
 import { usePresenceCounts } from "@/lib/usePresenceCounts";
@@ -30,6 +31,7 @@ function HereBadge({ count }: { count: number }) {
 export default function Lobby() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
   const counts = usePresenceCounts(TEAM_IDS);
 
   // localStorage is only there on the client, so read it after mount to keep
@@ -42,7 +44,10 @@ export default function Lobby() {
   const create = (e: React.FormEvent) => {
     e.preventDefault();
     if (!slug) return;
-    router.push(`/room/${slug}`);
+    // The deck rides along in the URL so the invite link carries it too; the
+    // default deck is left off to keep the common link clean.
+    const query = deckId !== DEFAULT_DECK_ID ? `?deck=${deckId}` : "";
+    router.push(`/room/${slug}${query}`);
   };
 
   return (
@@ -110,9 +115,27 @@ export default function Lobby() {
             maxLength={40}
             className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center outline-none focus:border-gold"
           />
+          <label className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-sm">
+            <span className="text-white/60">Deck</span>
+            <select
+              value={deckId}
+              onChange={(e) => setDeckId(e.target.value)}
+              className="cursor-pointer rounded-md border border-white/10 bg-[#1b202b] px-2 py-1 font-semibold text-white outline-none focus:border-gold"
+            >
+              {DECK_LIST.map((deck) => (
+                <option key={deck.id} value={deck.id}>
+                  {deck.name}
+                </option>
+              ))}
+            </select>
+          </label>
           {slug && (
             <p className="text-center text-[11px] text-white/35">
-              opens <span className="text-white/60">/room/{slug}</span>
+              opens{" "}
+              <span className="text-white/60">
+                /room/{slug}
+                {deckId !== DEFAULT_DECK_ID && `?deck=${deckId}`}
+              </span>
             </p>
           )}
           <button
