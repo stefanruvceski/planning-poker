@@ -258,9 +258,18 @@ export default function PokerTable({
                     ))}
                   </div>
                 </div>
-                {stats.consensus && (
+                {stats.consensus ? (
                   <div className="table-label text-sm font-bold text-emerald-300">🎉 Consensus!</div>
-                )}
+                ) : stats.wideSpread ? (
+                  // Names are deliberately left out - only the range is shown, so
+                  // the outliers can speak up rather than being called out.
+                  <div className="table-label text-xs font-bold text-amber-300 sm:text-sm">
+                    ⚠️ Wide spread — worth a quick chat{" "}
+                    <span className="font-semibold text-amber-200/80">
+                      (low {stats.low} · high {stats.high})
+                    </span>
+                  </div>
+                ) : null}
                 {canControl && (
                   <button
                     onClick={onReset}
