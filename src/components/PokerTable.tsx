@@ -39,6 +39,26 @@ interface Props {
   onCancelTimer: () => void;
 }
 
+/**
+ * Calibration cards pinned to the top of the felt: "a known 3d looks like X".
+ * Anchors everyone to a shared scale before they vote. Desktop only - it would
+ * crowd the small phone table, where the felt is already tight.
+ */
+function ReferenceBar({ references }: { references?: { value: string; note: string }[] }) {
+  if (!references?.length) return null;
+  return (
+    <div className="pointer-events-none absolute left-1/2 top-2.5 hidden max-w-[94%] -translate-x-1/2 items-center gap-2.5 whitespace-nowrap rounded-full bg-black/35 px-3 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,.08)] lg:flex">
+      <span className="text-[10px] font-bold uppercase tracking-wide text-white/40">Scale</span>
+      {references.map((r) => (
+        <span key={r.value} className="flex items-center gap-1 text-[11px] text-white/65">
+          <span className="rounded bg-white/90 px-1.5 py-0.5 text-[10px] font-bold text-slate-900">{r.value}</span>
+          {r.note}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 /** Facilitator-only deck switch, shown before the reveal. */
 function DeckPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
   return (
@@ -186,6 +206,7 @@ export default function PokerTable({
       <div className="rail absolute inset-x-[7%] inset-y-[14%] rounded-full p-3">
         <div className="felt relative flex h-full w-full items-center justify-center rounded-full">
           <FeltEmblem />
+          <ReferenceBar references={deck.references} />
 
           {/* Table centre */}
           <div className="relative flex flex-col items-center gap-1.5 text-center sm:gap-2">

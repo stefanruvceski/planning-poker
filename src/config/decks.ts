@@ -16,6 +16,12 @@ export interface Deck {
   values?: Record<string, number>;
   /** Appended to the average, so "5.5" reads as "5.5d". */
   suffix?: string;
+  /**
+   * Calibration examples pinned to the table edge: "a known 3d looks like X".
+   * They anchor the team to a shared scale so "5d" means the same to everyone,
+   * which matters most for a cross-country team. Edit here - no UI needed.
+   */
+  references?: { value: string; note: string }[];
 }
 
 export const DECKS: Record<string, Deck> = {
@@ -39,6 +45,13 @@ export const DECKS: Record<string, Deck> = {
       "10d": 10,
     },
     suffix: "d",
+    // Placeholder examples - swap these for real tickets the team agrees on.
+    references: [
+      { value: "<1d", note: "Copy or config tweak" },
+      { value: "3d", note: "Small feature, familiar area" },
+      { value: "5d", note: "Feature across a few services" },
+      { value: "8d", note: "New integration or migration" },
+    ],
   },
   fibonacci: {
     id: "fibonacci",
@@ -51,6 +64,12 @@ export const DECKS: Record<string, Deck> = {
     name: "T-Shirt",
     cards: ["XS", "S", "M", "L", "XL", "XXL", "?", "☕"],
     nonNumeric: ["XS", "S", "M", "L", "XL", "XXL", "?", "☕"],
+    references: [
+      { value: "S", note: "Small, well understood" },
+      { value: "M", note: "Standard feature" },
+      { value: "L", note: "Big, some unknowns" },
+      { value: "XL", note: "Too big — split it" },
+    ],
   },
   powers: {
     id: "powers",
