@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { DEFAULT_DECK_ID, getDeck, isDeckId } from "@/config/decks";
+import { reconcileRoster, rosterPlayers, hasGraceHold, type RosterEntry, type RosterPlayer } from "./roster";
 import { settlePot } from "./scoring";
 import { computeStats } from "./stats";
 import { supabase } from "./supabase";
@@ -64,6 +65,16 @@ interface Round {
  */
 const REVEAL_SETTLE_TIMEOUT_MS = 3000;
 
+/**
+ * How long a player may be missing from presence snapshots before we drop them
+ * from the table. Every client re-publishes its presence on the reveal (to
+ * attach its vote), and Supabase turns each re-publish into a leave→join, so a
+ * peer routinely vanishes from a single snapshot while still connected. Holding
+ * them for this window rides over those blips - the "someone disappears when you
+ * reveal" bug - while a peer who truly left is still removed shortly after.
+ */
+const PRESENCE_GRACE_MS = 4000;
+
 /** Chips outlive a refresh, the way the seat does. */
 const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
 /** And so does the round they were last paid for, or reloading pays twice. */
@@ -85,6 +96,8 @@ export function useRoom(roomId: string, me: Identity | null) {
   const [recap, setRecap] = useState<RecapEntry[]>([]);
 
   const channel = useRef<RealtimeChannel | null>(null);
+  /** Grace roster: last-known player by id, so a blip doesn't drop anyone. */
+  const roster = useRef<Map<string, RosterEntry>>(new Map());
   /** Round the pot was last paid for, so it is never settled twice. */
   const paidRev = useRef(-1);
   /** Round last written to the recap, so a re-render never logs it twice. */
@@ -185,28 +198,42 @@ export function useRoom(roomId: string, me: Identity | null) {
     });
     channel.current = ch;
 
-    ch.on("presence", { event: "sync" }, () => {
-      // One key is one player, but Supabase can hold several refs under it
-      // while a superseded one expires - flattening those would seat the same
-      // person twice. The last ref is the current payload.
-      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
-      rows.sort((a, b) => a.joinedAt - b.joinedAt);
+    let sweep: ReturnType<typeof setTimeout> | null = null;
 
-      setPlayers(
-        rows.map((r) => ({
-          id: r.id,
-          name: r.name,
-          avatarSeed: r.avatarSeed,
-          role: r.role,
-          hasVoted: r.hasVoted,
-          vote: r.vote,
-          chips: r.chips ?? 0,
-          // whoever has been at the table longest wears the host star
-          isHost: r.id === rows[0]?.id,
-        }))
-      );
+    /**
+     * Rebuild the table from the current presence snapshot, but through the
+     * grace roster so a peer that blinked out (a reveal re-publish, a momentary
+     * drop) is kept for a few seconds instead of vanishing. Called on every sync
+     * and, while someone is being held, again on a timer so a true leaver is
+     * still cleared even if no further sync arrives.
+     */
+    const recompute = () => {
+      // One key is one player, but Supabase can hold several refs under a key
+      // while a superseded one expires - the last ref is the current payload.
+      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
+      const present: RosterPlayer[] = rows.map((r) => ({
+        id: r.id,
+        name: r.name,
+        avatarSeed: r.avatarSeed,
+        role: r.role,
+        hasVoted: r.hasVoted,
+        vote: r.vote,
+        chips: r.chips ?? 0,
+        joinedAt: r.joinedAt,
+      }));
+      const now = Date.now();
+      roster.current = reconcileRoster(roster.current, present, now, PRESENCE_GRACE_MS);
+      setPlayers(rosterPlayers(roster.current));
+
+      if (sweep) clearTimeout(sweep);
+      if (hasGraceHold(roster.current, now)) sweep = setTimeout(recompute, PRESENCE_GRACE_MS + 100);
+    };
+
+    ch.on("presence", { event: "sync" }, () => {
+      recompute();
 
       // A late joiner (or someone who missed a broadcast) catches up here.
+      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
       const newest = rows.reduce<Round>(
         (best, r) => (r.rev > best.rev ? r : best),
         { rev: -1, revealed: false, story: "", deckId: local.current.deckId, deadline: local.current.deadline }
@@ -226,6 +253,8 @@ export function useRoom(roomId: string, me: Identity | null) {
     });
 
     return () => {
+      if (sweep) clearTimeout(sweep);
+      roster.current = new Map();
       channel.current = null;
       void supabase.removeChannel(ch);
     };

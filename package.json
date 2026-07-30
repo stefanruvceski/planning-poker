@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev -p 3210",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "tsx src/lib/roster.test.ts"
   },
   "dependencies": {
     "@dicebear/collection": "^9.2.2",
@@ -22,6 +23,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.19.2",
     "typescript": "^5"
   }
 }
