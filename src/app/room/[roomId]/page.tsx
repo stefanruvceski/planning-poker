@@ -91,7 +91,9 @@ export default function RoomPage() {
   );
 
   return (
-    <main className="flex h-screen flex-col">
+    // 100dvh (not 100vh) so the phone's browser bar can't push the hand deck
+    // out of view - the column always fits the *visible* viewport.
+    <main className="flex h-[100dvh] flex-col">
       <TopBar
         roomName={room.name}
         deckName={deck.name}

@@ -57,7 +57,7 @@ export default function Lobby() {
   };
 
   return (
-    <main className="flex h-screen flex-col items-center justify-center overflow-y-auto px-4 py-12">
+    <main className="flex h-[100dvh] flex-col items-center justify-center overflow-y-auto px-4 py-12">
       <header className="mb-10 flex flex-col items-center gap-3 text-center">
         <LogoMark className="h-14 w-14 text-[#e9453c]" />
         <h1 className="text-3xl font-extrabold leading-none tracking-tight">
