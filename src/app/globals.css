@@ -24,6 +24,28 @@ body {
   background-image: radial-gradient(ellipse at 50% -10%, #2a3a55 0%, #141a26 40%, #0b0d12 75%),
     repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.02) 0 2px, transparent 2px 14px);
   overflow: hidden;
+  /* Mobile feel: no pull-to-refresh / rubber-band, no grey tap flash. */
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Snappy taps: no 300ms delay, no accidental double-tap zoom on controls. */
+button,
+a,
+[role="button"] {
+  touch-action: manipulation;
+}
+
+/* The hand sits above the phone's bottom browser bar / home indicator, so its
+   cards stay tappable even when the address bar is docked at the bottom. Pairs
+   with the app shell using 100dvh so the whole column stays within view. */
+.hand-pad {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 640px) {
+  .hand-pad {
+    padding-bottom: 1.25rem;
+  }
 }
 
 /* ---- Table ---- */

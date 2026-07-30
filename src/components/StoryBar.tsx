@@ -48,7 +48,7 @@ export default function StoryBar({ story, editable, onChange }: Props) {
       }}
       maxLength={80}
       placeholder="What are we estimating? (optional)"
-      className="w-52 rounded-full border border-white/15 bg-black/35 px-4 py-1.5 text-center text-xs text-white outline-none transition placeholder:text-white/40 focus:border-gold focus:bg-black/50 sm:w-80 sm:text-sm"
+      className="w-52 rounded-full border border-white/15 bg-black/35 px-4 py-1.5 text-center text-base text-white outline-none transition placeholder:text-white/40 focus:border-gold focus:bg-black/50 sm:w-80 sm:text-sm"
     />
   );
 }
