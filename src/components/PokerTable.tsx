@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AnimatePresence } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { DECK_LIST, getDeck } from "@/config/decks";
 import { computeStats } from "@/lib/stats";
 import type { Player, RoomState } from "@/lib/types";
@@ -133,6 +133,42 @@ function payoutSeat(
   return idx < 0 ? null : pos[idx].seat;
 }
 
+/**
+ * A deliberate 3-2-1 plays after the facilitator reveals, then the cards turn.
+ * The votes almost always land inside these ~2.4s, so the wait reads as
+ * suspense instead of a spinner - and the cards only flip once the count is
+ * done AND every value is in. One step per number.
+ */
+const REVEAL_STEP_MS = 800;
+
+/** The 3-2-1 that plays before the cards turn: a number that springs in, over
+ *  a soft ring that ripples outward. Keyed by the number so each one animates. */
+function RevealCountdown({ n }: { n: number }) {
+  return (
+    <div className="relative flex h-16 w-16 items-center justify-center sm:h-20 sm:w-20">
+      <AnimatePresence>
+        <motion.span
+          key={`ring-${n}`}
+          initial={{ scale: 0.5, opacity: 0.4 }}
+          animate={{ scale: 1.9, opacity: 0 }}
+          transition={{ duration: 0.7, ease: "easeOut" }}
+          className="absolute h-12 w-12 rounded-full border-2 border-gold/50 sm:h-14 sm:w-14"
+        />
+        <motion.span
+          key={n}
+          initial={{ scale: 1.7, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          exit={{ scale: 0.5, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 280, damping: 18 }}
+          className="table-label absolute text-5xl font-extrabold text-gold sm:text-6xl"
+        >
+          {n}
+        </motion.span>
+      </AnimatePresence>
+    </div>
+  );
+}
+
 /** Cards flip, then the bets are gathered, then the pot is pushed to the winner. */
 const GATHER_AFTER_MS = 450;
 const PAY_AFTER_MS = 1500;
@@ -167,8 +203,33 @@ export default function PokerTable({
 
   const [phase, setPhase] = useState<"bet" | "pot" | "payout">("bet");
 
+  // 3-2-1 between the reveal and the cards turning. `count` is the number on
+  // screen; `countdownDone` flips once it finishes.
+  const [count, setCount] = useState(3);
+  const [countdownDone, setCountdownDone] = useState(false);
+
   useEffect(() => {
-    if (!showResults) {
+    if (!room.revealed) {
+      setCount(3);
+      setCountdownDone(false);
+      return;
+    }
+    setCount(3);
+    setCountdownDone(false);
+    const timers = [
+      window.setTimeout(() => setCount(2), REVEAL_STEP_MS),
+      window.setTimeout(() => setCount(1), REVEAL_STEP_MS * 2),
+      window.setTimeout(() => setCountdownDone(true), REVEAL_STEP_MS * 3),
+    ];
+    return () => timers.forEach(clearTimeout);
+  }, [room.revealed]);
+
+  // The moment the table actually turns: the count has finished AND every
+  // vote has landed. Drives the cards, chips and numbers - never room.revealed.
+  const showdown = showResults && countdownDone;
+
+  useEffect(() => {
+    if (!showdown) {
       setPhase("bet");
       return;
     }
@@ -178,7 +239,7 @@ export default function PokerTable({
       clearTimeout(gather);
       clearTimeout(pay);
     };
-  }, [showResults]);
+  }, [showdown]);
 
   return (
     <div className="relative aspect-[16/8.5] h-full w-auto max-h-full max-w-full">
@@ -191,10 +252,8 @@ export default function PokerTable({
           <div className="relative flex flex-col items-center gap-1.5 text-center sm:gap-2">
             <StoryBar story={room.story ?? ""} editable={canControl} onChange={onStory} />
 
-            {room.revealed && !showResults ? (
-              <div className="table-label rounded-full bg-black/30 px-4 py-1.5 text-xs text-white/75 sm:px-5 sm:py-2 sm:text-sm">
-                Revealing…
-              </div>
+            {room.revealed && !showdown ? (
+              <RevealCountdown n={count} />
             ) : !room.revealed ? (
               <>
                 {deadline !== null && <Countdown deadline={deadline} />}
@@ -292,7 +351,7 @@ export default function PokerTable({
             className="absolute -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${pos[i].card.x}%`, top: `${pos[i].card.y}%` }}
           >
-            <PlayingCard value={p.vote} revealed={showResults} hasVoted={p.hasVoted} />
+            <PlayingCard value={p.vote} revealed={showdown} hasVoted={p.hasVoted} />
           </div>
         )
       )}
@@ -314,7 +373,7 @@ export default function PokerTable({
           return (
             <ChipStack
               key={`chips-${p.id}`}
-              tone={showResults ? chipTone(deck, p.vote) : "chip-hidden"}
+              tone={showdown ? chipTone(deck, p.vote) : "chip-hidden"}
               at={at}
               jitter={(p.id.charCodeAt(0) % 3) - 1}
               faded={phase === "payout"}
@@ -334,7 +393,7 @@ export default function PokerTable({
             player={p}
             isMe={p.id === meId}
             isDealer={p.id === facilitatorId}
-            showResults={showResults}
+            showResults={showdown}
             isLeader={leaderIds.includes(p.id)}
             wonRound={phase === "payout" && winnerIds.includes(p.id)}
           />
