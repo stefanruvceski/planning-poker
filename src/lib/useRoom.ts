@@ -64,16 +64,6 @@ interface Round {
  */
 const REVEAL_SETTLE_TIMEOUT_MS = 3000;
 
-/**
- * How often each client re-publishes its own presence. Presence diffs travel
- * over the socket, and across a real network one can be missed or a client can
- * briefly drop - which leaves a peer as a "ghost": gone from one table, still
- * present on its own. Re-tracking on a heartbeat re-asserts membership, so a
- * missing peer reappears within a few seconds without anyone doing anything.
- * (On localhost this never bites, which is why multiple tabs always stay.)
- */
-const PRESENCE_HEARTBEAT_MS = 5000;
-
 /** Chips outlive a refresh, the way the seat does. */
 const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
 /** And so does the round they were last paid for, or reloading pays twice. */
@@ -229,9 +219,6 @@ export function useRoom(roomId: string, me: Identity | null) {
       if (next.rev > local.current.rev) applyRound(next);
     });
 
-    // Fires on the first join and again on every automatic re-join after a
-    // dropped socket, so re-publishing here re-asserts our presence each time
-    // the channel comes back rather than only once.
     ch.subscribe((status) => {
       const live = status === "SUBSCRIBED";
       setConnected(live);
@@ -243,16 +230,6 @@ export function useRoom(roomId: string, me: Identity | null) {
       void supabase.removeChannel(ch);
     };
   }, [roomId, me, applyRound, push]);
-
-  // Presence heartbeat: keep re-publishing while connected so a peer that fell
-  // out of our roster (a missed diff, a brief drop) is restored on the next
-  // tick instead of lingering as a ghost. Re-tracking the same payload is
-  // idempotent and well under the socket's rate limit.
-  useEffect(() => {
-    if (!connected) return;
-    const id = setInterval(push, PRESENCE_HEARTBEAT_MS);
-    return () => clearInterval(id);
-  }, [connected, push]);
 
   const publishRound = useCallback(
     (patch: Partial<Round>) => {
