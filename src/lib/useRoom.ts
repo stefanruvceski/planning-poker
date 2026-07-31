@@ -1,9 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { DEFAULT_DECK_ID, getDeck, isDeckId } from "@/config/decks";
-import { reconcileRoster, rosterPlayers, hasGraceHold, type RosterEntry, type RosterPlayer } from "./roster";
 import { settlePot } from "./scoring";
 import { computeStats } from "./stats";
 import { supabase } from "./supabase";
@@ -30,63 +29,62 @@ export interface RecapEntry {
   at: number;
 }
 
-/** What every client publishes about itself into the channel. */
-interface Presence extends Identity {
-  hasVoted: boolean;
-  /** Stays null until the round is revealed - the value never leaves the browser before that. */
-  vote: string | null;
-  /** Chips won so far. Each client only ever changes its own - see the award effect. */
+/** A row of the participants table, as it comes back from Postgres. */
+interface ParticipantRow {
+  room_id: string;
+  player_id: string;
+  name: string;
+  avatar_seed: string;
+  role: PlayerRole;
+  has_voted: boolean;
+  voted_rev: number;
   chips: number;
-  /** Lamport counter: highest rev wins, so every client converges on the same round. */
-  rev: number;
-  revealed: boolean;
-  story: string;
-  /** Which deck the table is playing - shared like the story, set by the facilitator. */
-  deckId: string;
-  /** Epoch ms the round auto-reveals at, or null for no timer. Shared like the round. */
-  deadline: number | null;
+  joined_at: string;
+  last_seen: string;
 }
 
+/** A row of the rooms table - the authoritative round state. */
+interface RoomRow {
+  id: string;
+  deck_id: string;
+  story: string;
+  revealed: boolean;
+  rev: number;
+  deadline: string | null;
+}
+
+/** The round state we keep locally, mirrored from the rooms row. */
 interface Round {
   rev: number;
   revealed: boolean;
-  /** Set by the facilitator; empty string means "show nothing". */
   story: string;
-  /** The deck in play. Changing it opens a fresh round on the new cards. */
   deckId: string;
-  /** When the voting timer fires (epoch ms), or null when none is running. */
   deadline: number | null;
 }
 
-/**
- * How long the table waits for the last vote to land before showing the round
- * anyway. A client that froze between the flip and its re-publish must not hold
- * everyone else hostage.
- */
-const REVEAL_SETTLE_TIMEOUT_MS = 3000;
+/** How often each client marks itself alive, and how long since the last mark
+ *  before a seat is treated as gone. Presence used to do this for us; now that
+ *  the roster lives in the database, a heartbeat + TTL takes its place. */
+const HEARTBEAT_MS = 12_000;
+const ONLINE_TTL_MS = 40_000;
 
-/**
- * How long a player may be missing from presence snapshots before we drop them
- * from the table. Every client re-publishes its presence on the reveal (to
- * attach its vote), and Supabase turns each re-publish into a leave→join, so a
- * peer routinely vanishes from a single snapshot while still connected. Holding
- * them for this window rides over those blips - the "someone disappears when you
- * reveal" bug - while a peer who truly left is still removed shortly after.
- */
-const PRESENCE_GRACE_MS = 4000;
-
-/** How long to wait before rebuilding a channel that dropped, so a flapping
- *  connection backs off instead of hammering rejoins. */
+/** Backoff before rebuilding a realtime channel that dropped. */
 const RECONNECT_DELAY_MS = 2000;
 
-/** Chips outlive a refresh, the way the seat does. */
-const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
-/** And so does the round they were last paid for, or reloading pays twice. */
+/** Chips are authoritative in the database now, but the round a client last paid
+ *  a pot for still lives in sessionStorage, so a refresh mid-reveal never pays
+ *  twice. */
 const paidKey = (roomId: string) => `pp:${roomId}:paidRev`;
-/** The deck sticks per room, so a refresh or a typed URL keeps it. */
+/** The deck a client seeds a brand-new room with (a typed ?deck= wins). */
 const deckKey = (roomId: string) => `pp:${roomId}:deck`;
-/** The session recap of estimated stories, kept per room like the chips. */
+/** My own current selection, so a refresh mid-round keeps my card lit even
+ *  though the vote value itself is never readable back out of the database. */
+const voteKey = (roomId: string) => `pp:${roomId}:myvote`;
+/** The session recap of estimated stories, kept per room like the chips were. */
 const recapKey = (roomId: string) => `pp:${roomId}:recap`;
+
+const nowMs = () => Date.now();
+const iso = () => new Date().toISOString();
 
 export function useRoom(roomId: string, me: Identity | null) {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -94,40 +92,36 @@ export function useRoom(roomId: string, me: Identity | null) {
   const [story, setStoryState] = useState("");
   const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
   const [deadline, setDeadline] = useState<number | null>(null);
+  const [rev, setRev] = useState(0);
   const [myVote, setMyVote] = useState<string | null>(null);
   const [connected, setConnected] = useState(false);
   const [winnerIds, setWinnerIds] = useState<string[]>([]);
   const [recap, setRecap] = useState<RecapEntry[]>([]);
+  /** Revealed vote values, keyed by player id - only ever populated by the RPC,
+   *  which returns them only once the round is revealed. */
+  const [revealedVotes, setRevealedVotes] = useState<Map<string, string>>(new Map());
+  /** The rev the revealed votes belong to, so we only show them for this round. */
+  const [revealedRev, setRevealedRev] = useState(-1);
+  /** Bumped by the heartbeat tick so the online filter re-evaluates over time. */
+  const [, setTick] = useState(0);
 
   const channel = useRef<RealtimeChannel | null>(null);
-  /** Grace roster: last-known player by id, so a blip doesn't drop anyone. */
-  const roster = useRef<Map<string, RosterEntry>>(new Map());
+  /** Local mirror of the participants table, keyed by player id. */
+  const roster = useRef<Map<string, ParticipantRow>>(new Map());
+  /** Current round, mirrored in a ref so async writers read fresh values. */
+  const round = useRef<Round>({ rev: 0, revealed: false, story: "", deckId: DEFAULT_DECK_ID, deadline: null });
   /** Round the pot was last paid for, so it is never settled twice. */
   const paidRev = useRef(-1);
   /** Round last written to the recap, so a re-render never logs it twice. */
   const recapRev = useRef(-1);
-  // Kept in a ref, not state: handlers run outside React's render cycle.
-  const local = useRef<{ vote: string | null; chips: number } & Round>({
-    vote: null,
-    chips: 0,
-    rev: 0,
-    revealed: false,
-    story: "",
-    deckId: DEFAULT_DECK_ID,
-    deadline: null,
-  });
 
-  // Read the running total back before the first publish, so a refresh mid
-  // planning does not quietly reset the player to zero. The deck is resolved
-  // here too: ?deck= from the invite link wins, then the per-room value, then
-  // the default. (Runs on the client, so window/sessionStorage are available.)
+  // Seed the per-client bits from sessionStorage before anything talks to the
+  // database: the deck a new room should be created with, the last paid round,
+  // my own current selection, and the recap so far.
   useEffect(() => {
-    const saved = Number(sessionStorage.getItem(chipsKey(roomId)));
-    if (Number.isFinite(saved) && saved > 0) local.current.chips = saved;
     const paid = Number(sessionStorage.getItem(paidKey(roomId)));
     if (Number.isFinite(paid)) paidRev.current = paid;
 
-    // Read the recap back so a refresh keeps the session's estimated stories.
     try {
       const stored = JSON.parse(sessionStorage.getItem(recapKey(roomId)) ?? "[]") as RecapEntry[];
       if (Array.isArray(stored) && stored.length) {
@@ -141,141 +135,213 @@ export function useRoom(roomId: string, me: Identity | null) {
     const fromUrl = new URLSearchParams(window.location.search).get("deck");
     const fromStore = sessionStorage.getItem(deckKey(roomId));
     const chosen = isDeckId(fromUrl) ? fromUrl : isDeckId(fromStore) ? fromStore : DEFAULT_DECK_ID;
-    local.current.deckId = chosen;
+    round.current.deckId = chosen;
     setDeckId(chosen);
     sessionStorage.setItem(deckKey(roomId), chosen);
   }, [roomId]);
 
-  /** Publish my current presence payload. */
-  const push = useCallback(() => {
-    const ch = channel.current;
-    if (!ch || !me) return;
-    const { vote, chips, rev, revealed: isRevealed, story: currentStory, deckId: currentDeck, deadline: currentDeadline } = local.current;
-    const payload: Presence = {
-      ...me,
-      hasVoted: vote !== null,
-      vote: isRevealed ? vote : null,
-      chips,
-      rev,
-      revealed: isRevealed,
-      story: currentStory,
-      deckId: currentDeck,
-      deadline: currentDeadline,
-    };
-    void ch.track(payload);
-  }, [me]);
-
-  /** Adopt a round (from a peer or from my own action) and re-publish. */
-  const applyRound = useCallback(
-    (next: Round) => {
-      const roundChanged = next.revealed !== local.current.revealed;
-      const deckChanged = next.deckId !== local.current.deckId;
-      local.current.rev = next.rev;
-      local.current.revealed = next.revealed;
-      local.current.story = next.story;
-      local.current.deckId = next.deckId;
-      local.current.deadline = next.deadline;
-      // Votes clear when the round opens - and also when the deck changes, since
-      // a "3d" vote is meaningless on a T-shirt deck. Editing the story or the
-      // timer does neither, so neither wipes votes.
-      if ((roundChanged && !next.revealed) || deckChanged) {
-        local.current.vote = null;
-        setMyVote(null);
-      }
-      setRevealed(next.revealed);
-      setStoryState(next.story);
-      setDeadline(next.deadline);
+  /** Adopt a room row into local round state, clearing my vote when a fresh
+   *  round opens (a new rev while not revealed) or the deck changes. */
+  const applyRoom = useCallback(
+    (row: RoomRow) => {
+      const prev = round.current;
+      const newRound = row.rev !== prev.rev && !row.revealed;
+      const deckChanged = row.deck_id !== prev.deckId;
+      round.current = {
+        rev: row.rev,
+        revealed: row.revealed,
+        story: row.story,
+        deckId: row.deck_id,
+        deadline: row.deadline ? Date.parse(row.deadline) : null,
+      };
+      setRev(row.rev);
+      setRevealed(row.revealed);
+      setStoryState(row.story);
+      setDeadline(round.current.deadline);
       if (deckChanged) {
-        setDeckId(next.deckId);
-        sessionStorage.setItem(deckKey(roomId), next.deckId);
+        setDeckId(row.deck_id);
+        sessionStorage.setItem(deckKey(roomId), row.deck_id);
       }
-      push();
+      if (newRound || deckChanged) {
+        setMyVote(null);
+        sessionStorage.removeItem(voteKey(roomId));
+      }
     },
-    [push, roomId]
+    [roomId]
   );
 
+  /** Rebuild the visible player list from the roster, dropping seats whose last
+   *  heartbeat is older than the TTL (a closed tab that never got to clean up). */
+  const rebuildPlayers = useCallback(() => {
+    const cutoff = nowMs() - ONLINE_TTL_MS;
+    const live = [...roster.current.values()]
+      .filter((p) => Date.parse(p.last_seen) >= cutoff || p.player_id === me?.id)
+      .sort((a, b) => Date.parse(a.joined_at) - Date.parse(b.joined_at));
+    const hostId = live[0]?.player_id;
+    const r = round.current.rev;
+    const showing = round.current.revealed && revealedRev === r;
+    setPlayers(
+      live.map((p) => ({
+        id: p.player_id,
+        name: p.name,
+        avatarSeed: p.avatar_seed,
+        role: p.role,
+        hasVoted: p.has_voted && p.voted_rev === r,
+        vote: showing ? revealedVotes.get(p.player_id) ?? null : null,
+        chips: p.chips,
+        isHost: p.player_id === hostId,
+      }))
+    );
+  }, [me?.id, revealedVotes, revealedRev]);
+
+  /** Read every participant of the room and replace the local mirror. Used on
+   *  first load and after any reconnect, so the roster is always reconciled to
+   *  the database rather than trusting a possibly-missed stream of changes. */
+  const loadParticipants = useCallback(async () => {
+    const { data } = await supabase.from("participants").select("*").eq("room_id", roomId);
+    if (!data) return;
+    const next = new Map<string, ParticipantRow>();
+    for (const row of data as ParticipantRow[]) next.set(row.player_id, row);
+    roster.current = next;
+    rebuildPlayers();
+  }, [roomId, rebuildPlayers]);
+
+  /** Read the room row (creating it lazily if this is the first person in). */
+  const loadRoom = useCallback(async () => {
+    const { data } = await supabase.from("rooms").select("*").eq("id", roomId).maybeSingle();
+    if (data) applyRoom(data as RoomRow);
+  }, [roomId, applyRoom]);
+
+  /** Pull the revealed votes for the current round through the gated RPC. */
+  const loadRevealed = useCallback(async () => {
+    const r = round.current.rev;
+    const { data } = await supabase.rpc("revealed_votes", { p_room_id: roomId });
+    const map = new Map<string, string>();
+    for (const row of (data ?? []) as { player_id: string; value: string }[]) {
+      map.set(row.player_id, row.value);
+    }
+    setRevealedVotes(map);
+    setRevealedRev(r);
+  }, [roomId]);
+
+  // When the round flips to revealed, fetch the values once. When it closes,
+  // drop them so a stale set never leaks into the next round.
+  useEffect(() => {
+    if (revealed) {
+      void loadRevealed();
+    } else {
+      setRevealedVotes(new Map());
+      setRevealedRev(-1);
+    }
+  }, [revealed, rev, loadRevealed]);
+
+  // Roster/round changes and the online-TTL tick all feed the visible list.
+  useEffect(() => {
+    rebuildPlayers();
+  }, [rebuildPlayers, revealed, rev]);
+
+  const me_id = me?.id;
+  const me_role = me?.role;
+
+  // The loaders change identity as their inputs change (rebuildPlayers, for one,
+  // is rebuilt whenever the revealed votes arrive). We hold them in a ref so the
+  // realtime setup below can call the latest version without listing them as
+  // dependencies - otherwise the channel would tear down and rebuild on every
+  // reveal, which is exactly what it must not do.
+  const fns = useRef({ applyRoom, rebuildPlayers, loadRoom, loadParticipants, loadRevealed });
+  fns.current = { applyRoom, rebuildPlayers, loadRoom, loadParticipants, loadRevealed };
+
+  // Everything that talks to the database for this room, plus the realtime
+  // subscription that keeps it live and recovers when the socket drops.
   useEffect(() => {
     if (!me) return;
-
     let disposed = false;
-    let sweep: ReturnType<typeof setTimeout> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
+    let beat: ReturnType<typeof setInterval> | null = null;
 
-    /**
-     * Rebuild the table from the current presence snapshot, but through the
-     * grace roster so a peer that blinked out (a reveal re-publish, a momentary
-     * drop) is kept for a few seconds instead of vanishing. Called on every sync
-     * and, while someone is being held, again on a timer so a true leaver is
-     * still cleared even if no further sync arrives.
-     */
-    const recompute = () => {
-      const ch = channel.current;
-      if (!ch) return;
-      // One key is one player, but Supabase can hold several refs under a key
-      // while a superseded one expires - the last ref is the current payload.
-      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
-      const present: RosterPlayer[] = rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        avatarSeed: r.avatarSeed,
-        role: r.role,
-        hasVoted: r.hasVoted,
-        vote: r.vote,
-        chips: r.chips ?? 0,
-        joinedAt: r.joinedAt,
-      }));
-      const now = Date.now();
-      roster.current = reconcileRoster(roster.current, present, now, PRESENCE_GRACE_MS);
-      setPlayers(rosterPlayers(roster.current));
-
-      if (sweep) clearTimeout(sweep);
-      if (hasGraceHold(roster.current, now)) sweep = setTimeout(recompute, PRESENCE_GRACE_MS + 100);
+    /** Create the room if absent (seeding the deck), then take my seat. */
+    const ensurePresence = async () => {
+      await supabase
+        .from("rooms")
+        .upsert({ id: roomId, deck_id: round.current.deckId }, { onConflict: "id", ignoreDuplicates: true });
+      // Omit chips / joined_at so a refresh keeps them; last_seen marks us alive.
+      await supabase.from("participants").upsert(
+        {
+          room_id: roomId,
+          player_id: me.id,
+          name: me.name,
+          avatar_seed: me.avatarSeed,
+          role: me.role,
+          last_seen: iso(),
+        },
+        { onConflict: "room_id,player_id" }
+      );
     };
 
-    /** A late joiner (or someone who missed a broadcast) catches up here. */
-    const catchUp = () => {
-      const ch = channel.current;
-      if (!ch) return;
-      const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
-      const newest = rows.reduce<Round>(
-        (best, r) => (r.rev > best.rev ? r : best),
-        { rev: -1, revealed: false, story: "", deckId: local.current.deckId, deadline: local.current.deadline }
-      );
-      if (newest.rev > local.current.rev) applyRound(newest);
+    /** Mark myself alive and sweep out seats that stopped marking themselves. */
+    const heartbeat = async () => {
+      await supabase
+        .from("participants")
+        .update({ last_seen: iso() })
+        .eq("room_id", roomId)
+        .eq("player_id", me.id);
+      await supabase
+        .from("participants")
+        .delete()
+        .eq("room_id", roomId)
+        .lt("last_seen", new Date(nowMs() - ONLINE_TTL_MS).toISOString());
+      setTick((t) => t + 1); // re-evaluate the online filter locally too
+    };
+
+    const applyParticipantChange = (payload: {
+      eventType: string;
+      new: Partial<ParticipantRow>;
+      old: Partial<ParticipantRow>;
+    }) => {
+      if (payload.eventType === "DELETE") {
+        const id = payload.old.player_id;
+        if (id) roster.current.delete(id);
+      } else {
+        const row = payload.new as ParticipantRow;
+        if (row.player_id) roster.current.set(row.player_id, row);
+      }
+      fns.current.rebuildPlayers();
     };
 
     const connect = () => {
       if (disposed) return;
-      const ch = supabase.channel(`room:${roomId}`, {
-        config: { presence: { key: me.id } },
-      });
+      const ch = supabase.channel(`room:${roomId}`, { config: { broadcast: { self: false } } });
       channel.current = ch;
 
-      ch.on("presence", { event: "sync" }, () => {
-        recompute();
-        catchUp();
-      });
-
-      ch.on("broadcast", { event: "round" }, ({ payload }) => {
-        const next = payload as Round;
-        if (next.rev > local.current.rev) applyRound(next);
-      });
+      ch.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "rooms", filter: `id=eq.${roomId}` },
+        (payload) => {
+          const row = payload.new as RoomRow;
+          if (row?.id) fns.current.applyRoom(row);
+        }
+      );
+      ch.on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "participants", filter: `room_id=eq.${roomId}` },
+        (payload) => applyParticipantChange(payload as never)
+      );
 
       ch.subscribe((status) => {
-        // A callback from a channel we've already torn down (a stale CLOSED as we
-        // rebuild) must not touch state or schedule another reconnect.
-        if (channel.current !== ch) return;
+        if (channel.current !== ch) return; // stale callback from a torn-down channel
         if (status === "SUBSCRIBED") {
           setConnected(true);
-          push(); // re-publish our seat + current round so peers re-converge
+          // Reconcile to the database on every (re)connect: the change stream
+          // only carries what happened while we were listening.
+          void (async () => {
+            await ensurePresence();
+            await fns.current.loadRoom();
+            await fns.current.loadParticipants();
+            if (round.current.revealed) await fns.current.loadRevealed();
+          })();
           return;
         }
         setConnected(false);
-        // The socket dropped - a laptop sleep, a network switch, a backgrounded
-        // tab - and Supabase left the channel errored instead of rejoining it.
-        // That is what strands a client on conn=false forever (seen in the debug
-        // panel: one side revealed, the other still voting). Rebuild the channel
-        // on a short backoff so it actually recovers.
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           if (retry) clearTimeout(retry);
           retry = setTimeout(reconnect, RECONNECT_DELAY_MS);
@@ -288,110 +354,126 @@ export function useRoom(roomId: string, me: Identity | null) {
       const stale = channel.current;
       channel.current = null;
       if (stale) void supabase.removeChannel(stale);
-      // Make sure the underlying socket is alive; a fresh channel then rejoins.
       supabase.realtime.connect();
       connect();
     };
 
-    // Returning to a backgrounded tab, or the network coming back, is the usual
-    // moment a dead socket needs a shove. Rejoin if we are not cleanly joined.
     const onWake = () => {
       if (disposed || document.visibilityState !== "visible") return;
       supabase.realtime.connect();
       if (channel.current?.state !== "joined") reconnect();
+      else void heartbeat();
     };
 
     connect();
+    beat = setInterval(heartbeat, HEARTBEAT_MS);
     window.addEventListener("online", onWake);
     document.addEventListener("visibilitychange", onWake);
+    // Best-effort clean exit so a closed tab frees its seat immediately rather
+    // than waiting out the TTL.
+    const onLeave = () => {
+      void supabase.from("participants").delete().eq("room_id", roomId).eq("player_id", me.id);
+    };
+    window.addEventListener("pagehide", onLeave);
 
     return () => {
       disposed = true;
-      if (sweep) clearTimeout(sweep);
       if (retry) clearTimeout(retry);
+      if (beat) clearInterval(beat);
       window.removeEventListener("online", onWake);
       document.removeEventListener("visibilitychange", onWake);
-      roster.current = new Map();
+      window.removeEventListener("pagehide", onLeave);
+      onLeave();
       const ch = channel.current;
       channel.current = null;
       if (ch) void supabase.removeChannel(ch);
     };
-  }, [roomId, me, applyRound, push]);
+    // Built once per room + identity; the loaders are reached through fns.current
+    // so a reveal never rebuilds the channel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roomId, me_id, me_role]);
 
-  const publishRound = useCallback(
-    (patch: Partial<Round>) => {
-      const next: Round = {
-        rev: local.current.rev + 1,
-        revealed: local.current.revealed,
-        story: local.current.story,
-        deckId: local.current.deckId,
-        deadline: local.current.deadline,
-        ...patch,
-      };
-      applyRound(next);
-      void channel.current?.send({ type: "broadcast", event: "round", payload: next });
-    },
-    [applyRound]
-  );
+  // --- Actions. All of them are just writes to the database; realtime carries
+  //     the result back to every client, this one included. ---
 
   const vote = useCallback(
     (value: string) => {
-      if (local.current.revealed) return;
-      local.current.vote = local.current.vote === value ? null : value;
-      setMyVote(local.current.vote);
-      push();
+      if (!me || round.current.revealed || me.role === "spectator") return;
+      const r = round.current.rev;
+      const clearing = myVote === value;
+      if (clearing) {
+        setMyVote(null);
+        sessionStorage.removeItem(voteKey(roomId));
+        void supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id);
+        void supabase
+          .from("participants")
+          .update({ has_voted: false, voted_rev: r, last_seen: iso() })
+          .eq("room_id", roomId)
+          .eq("player_id", me.id);
+      } else {
+        setMyVote(value);
+        sessionStorage.setItem(voteKey(roomId), JSON.stringify({ rev: r, value }));
+        void supabase
+          .from("votes")
+          .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" });
+        void supabase
+          .from("participants")
+          .update({ has_voted: true, voted_rev: r, last_seen: iso() })
+          .eq("room_id", roomId)
+          .eq("player_id", me.id);
+      }
     },
-    [push]
+    [me, myVote, roomId]
   );
 
-  // Revealing or opening a new round always stops any running timer.
-  const reveal = useCallback(() => publishRound({ revealed: true, deadline: null }), [publishRound]);
-  const reset = useCallback(() => publishRound({ revealed: false, deadline: null }), [publishRound]);
-  /** Facilitator starts the voting timer; cancel by passing null seconds. */
+  const patchRoom = useCallback(
+    (patch: Partial<RoomRow>) =>
+      void supabase.from("rooms").update({ ...patch, updated_at: iso() }).eq("id", roomId),
+    [roomId]
+  );
+
+  const reveal = useCallback(() => patchRoom({ revealed: true, deadline: null }), [patchRoom]);
+  const reset = useCallback(() => {
+    setMyVote(null);
+    sessionStorage.removeItem(voteKey(roomId));
+    patchRoom({ revealed: false, rev: round.current.rev + 1, deadline: null });
+  }, [patchRoom, roomId]);
+  const setStory = useCallback((text: string) => patchRoom({ story: text }), [patchRoom]);
+  const setDeck = useCallback(
+    (id: string) => patchRoom({ deck_id: id, revealed: false, rev: round.current.rev + 1, deadline: null }),
+    [patchRoom]
+  );
   const startTimer = useCallback(
-    (seconds: number) => publishRound({ deadline: Date.now() + seconds * 1000 }),
-    [publishRound]
+    (seconds: number) => patchRoom({ deadline: new Date(nowMs() + seconds * 1000).toISOString() }),
+    [patchRoom]
   );
-  const cancelTimer = useCallback(() => publishRound({ deadline: null }), [publishRound]);
+  const cancelTimer = useCallback(() => patchRoom({ deadline: null }), [patchRoom]);
 
-  /** Wipe the session recap. Only clears this client's copy of the log. */
-  const clearRecap = useCallback(() => {
-    recapRev.current = local.current.rev; // don't re-log the round on screen now
-    setRecap([]);
-    sessionStorage.removeItem(recapKey(roomId));
-  }, [roomId]);
+  // Restore my own selection after a refresh - the value can't be read back out
+  // of the database (votes are write-only to clients), so it comes from
+  // sessionStorage, and only if it belongs to the round still open.
+  useEffect(() => {
+    if (revealed || myVote !== null) return;
+    try {
+      const raw = sessionStorage.getItem(voteKey(roomId));
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { rev: number; value: string };
+      if (saved.rev === rev) setMyVote(saved.value);
+    } catch {
+      // ignore a corrupt entry
+    }
+  }, [roomId, rev, revealed, myVote]);
 
   const deck = getDeck(deckId);
 
-  /**
-   * The reveal has to land as one event. Each client re-publishes its own vote
-   * only once the round flips, so the values arrive one payload at a time; if
-   * the table rendered them as they came, the cards would turn one by one and
-   * the average would jump with every arrival. So we hold the whole result back
-   * until every player who voted has published a value - or until the timeout
-   * gives up on a straggler.
-   */
-  const awaitingVotes = players.some((p) => p.role === "player" && p.hasVoted && p.vote === null);
-  const [settleTimedOut, setSettleTimedOut] = useState(false);
-
-  useEffect(() => {
-    if (!revealed) {
-      setSettleTimedOut(false);
-      return;
-    }
-    const timer = setTimeout(() => setSettleTimedOut(true), REVEAL_SETTLE_TIMEOUT_MS);
-    return () => clearTimeout(timer);
-  }, [revealed]);
-
-  const showResults = revealed && (!awaitingVotes || settleTimedOut);
+  /** The whole round is on the table: it is revealed and its values are in. */
+  const showResults = revealed && revealedRev === rev;
 
   /**
-   * Settle the pot the moment the round is whole. Every client runs the same
-   * calculation over the same votes, so they all pick the same winners without
-   * another message on the wire - and each one only ever moves its own counter,
-   * so a client that somehow disagreed could not corrupt anybody else's total.
-   *
-   * Guarded by rev, or a re-render would pay the pot out twice.
+   * Settle the pot once the round is shown. Every client runs the same maths
+   * over the same votes and picks the same winners, then each moves only its
+   * own chip count (now a column in the database, so it survives a closed tab).
+   * Guarded by rev so a re-render or a refresh never pays twice.
    */
   useEffect(() => {
     if (!showResults || !me) {
@@ -402,25 +484,15 @@ export function useRoom(roomId: string, me: Identity | null) {
     const { winners, each } = settlePot(players, deck, stats.average);
     setWinnerIds(winners);
 
-    // Never settle on a partial round. The timeout above opens the table when a
-    // straggler is slow, but the pot must wait for the real vote set - paying
-    // out on the votes that happened to have arrived hands chips to the wrong
-    // player, and the average moves the moment the last one lands. When it does,
-    // this effect runs again and pays properly.
-    if (awaitingVotes) return;
-
-    // Log this revealed round to the session recap, once per round (like the
-    // pot). Every client computes the same stats, so each keeps an identical
-    // local copy - no new message on the wire.
-    if (recapRev.current !== local.current.rev) {
-      recapRev.current = local.current.rev;
+    if (recapRev.current !== rev) {
+      recapRev.current = rev;
       const entry: RecapEntry = {
-        rev: local.current.rev,
-        story: local.current.story,
+        rev,
+        story: round.current.story,
         estimate: stats.average !== null ? `${stats.average}${deck.suffix ?? ""}` : "—",
         consensus: stats.consensus,
         distribution: stats.distribution,
-        at: Date.now(),
+        at: nowMs(),
       };
       setRecap((prev) => {
         const next = [...prev, entry];
@@ -429,41 +501,35 @@ export function useRoom(roomId: string, me: Identity | null) {
       });
     }
 
-    if (paidRev.current === local.current.rev) return;
-    paidRev.current = local.current.rev;
-    sessionStorage.setItem(paidKey(roomId), String(paidRev.current));
-
+    if (paidRev.current === rev) return;
+    paidRev.current = rev;
+    sessionStorage.setItem(paidKey(roomId), String(rev));
     if (winners.includes(me.id)) {
-      local.current.chips += each;
-      sessionStorage.setItem(chipsKey(roomId), String(local.current.chips));
-      push();
+      const mine = roster.current.get(me.id);
+      const chips = (mine?.chips ?? 0) + each;
+      void supabase.from("participants").update({ chips }).eq("room_id", roomId).eq("player_id", me.id);
     }
-  }, [showResults, awaitingVotes, players, deck, me, roomId, push]);
+  }, [showResults, players, deck, me, rev, roomId]);
 
   /**
-   * Only the spectator runs the session (reveal / new round / story) - the
-   * people estimating just estimate. If nobody joined as a spectator the table
-   * would be stuck, so the longest-seated player takes over instead.
+   * Only the spectator runs the session (reveal / new round / story). If nobody
+   * joined as a spectator the longest-seated player takes over, so the table is
+   * never stuck.
    */
   const spectatorCount = players.filter((p) => p.role === "spectator").length;
   const canControl =
     !!me && (me.role === "spectator" || (spectatorCount === 0 && players[0]?.id === me.id));
 
-  /**
-   * Whose seat the dealer button sits on. Control itself stays with every
-   * spectator, as above - this only picks the one seat to badge, so a table
-   * with two spectators does not sprout two dealers.
-   */
-  const facilitatorId = players.find((p) => p.role === "spectator")?.id ?? players[0]?.id ?? "";
+  /** Whose seat carries the dealer button. */
+  const facilitatorId = useMemo(
+    () => players.find((p) => p.role === "spectator")?.id ?? players[0]?.id ?? "",
+    [players]
+  );
 
-  /**
-   * When the voting timer lands, only the facilitator's client flips the reveal
-   * - one authority firing it, and reveal clears the deadline so it happens
-   * once. Everyone else just watches their countdown reach zero.
-   */
+  /** When the timer lands, only the facilitator's client flips the reveal. */
   useEffect(() => {
     if (!canControl || revealed || deadline === null) return;
-    const ms = deadline - Date.now();
+    const ms = deadline - nowMs();
     if (ms <= 0) {
       reveal();
       return;
@@ -472,6 +538,13 @@ export function useRoom(roomId: string, me: Identity | null) {
     return () => clearTimeout(t);
   }, [canControl, revealed, deadline, reveal]);
 
+  /** Wipe the session recap (this client's copy of the log). */
+  const clearRecap = useCallback(() => {
+    recapRev.current = round.current.rev;
+    setRecap([]);
+    sessionStorage.removeItem(recapKey(roomId));
+  }, [roomId]);
+
   return {
     players,
     /** Round state: locks voting the moment the facilitator flips it. */
@@ -479,29 +552,21 @@ export function useRoom(roomId: string, me: Identity | null) {
     /** Display gate: true only once the whole round can be shown at once. */
     showResults,
     story,
-    /** The deck currently in play - the source of truth is the channel. */
     deckId,
-    /** When the voting timer fires (epoch ms), or null for no timer. */
     deadline,
     myVote,
     connected,
     canControl,
     facilitatorId,
-    /** Who takes this round's pot - drives the payout animation. */
     winnerIds,
     vote,
     reveal,
     reset,
-    setStory: useCallback((text: string) => publishRound({ story: text }), [publishRound]),
-    /** Facilitator picks the deck; it opens a fresh round on the new cards. */
-    setDeck: useCallback((id: string) => publishRound({ deckId: id, revealed: false, deadline: null }), [publishRound]),
-    /** Facilitator starts a countdown that auto-reveals when it hits zero. */
+    setStory,
+    setDeck,
     startTimer,
-    /** Facilitator stops a running countdown without revealing. */
     cancelTimer,
-    /** Every story estimated this session, oldest first. */
     recap,
-    /** Wipe this client's session recap. */
     clearRecap,
   };
 }
