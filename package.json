@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3210",
     "build": "next build",
-    "start": "next start",
-    "test": "tsx src/lib/roster.test.ts"
+    "start": "next start"
   },
   "dependencies": {
     "@dicebear/collection": "^9.2.2",

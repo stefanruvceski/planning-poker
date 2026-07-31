@@ -8,15 +8,15 @@ if (!url || !key) {
 }
 
 /**
- * Realtime only - no database, no auth for the MVP.
- * The publishable key is meant to live in the browser; the room state is kept
- * entirely in the channel (presence + broadcast).
+ * Postgres + Realtime, no auth for the MVP. The room state lives in the database
+ * (rooms / participants / votes - see supabase/migrations), which is the single
+ * source of truth every client reconciles against; Realtime just streams row
+ * changes so the table stays live. The publishable key is meant to live in the
+ * browser, and RLS keeps a vote value unreadable until the round is revealed.
  *
  * Cached on globalThis so there is exactly ONE client - and therefore one
  * WebSocket - for the whole app. Without this, dev Fast Refresh re-evaluates
- * this module and spins up a second client/socket on every hot reload, and two
- * sockets in the same room split a player's presence so their revealed card
- * never reaches everyone.
+ * this module and spins up a second client/socket on every hot reload.
  */
 const globalForSupabase = globalThis as unknown as { __ppSupabase?: SupabaseClient };
 

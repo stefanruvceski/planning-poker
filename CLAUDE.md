@@ -16,7 +16,7 @@ npm run dev        # http://localhost:3210 -> redirects to /room/default
 ## Stack and why
 
 - **Next.js 15 (App Router) + TypeScript + Tailwind v4** — deploys free on Vercel.
-- **Supabase Realtime** — Vercel is serverless and cannot hold a WebSocket. Supabase Presence gives us "who is at the table" for free, including cleanup when someone closes their tab. No database, no auth, no RLS in the MVP: the whole room state lives in the channel.
+- **Supabase Postgres + Realtime** — Vercel is serverless and cannot hold a WebSocket, so the server side is the database. Room state lives in Postgres (`rooms` / `participants` / `votes`, see `supabase/migrations`), the single source of truth every client reconciles against; Realtime just streams row changes so the table stays live. A dropped client re-reads the truth on reconnect instead of drifting. This replaced an earlier presence-only design where each client held its own copy and gossiped it — which desynced the moment a socket dropped. No auth yet: the anon (publishable) key does everything, and **RLS keeps a vote value unreadable until the reveal** (see `revealed_votes()`).
 - **DiceBear (bottts)** — avatars generated locally as SVG, no API calls. Style is one constant in `src/config/avatars.ts`. The `funEmoji` style was rejected: it draws sick faces and surgical masks.
 - **Framer Motion** — card flip on reveal.
 
@@ -29,31 +29,34 @@ src/config/decks.ts      card decks — edit values here, no UI needed. Default 
                          and `suffix` puts the unit back on it.
 src/config/avatars.ts    avatar style + seed helpers
 src/config/room.ts       room name + deck id
-src/lib/useRoom.ts       ALL realtime logic (presence + broadcast)
+src/lib/useRoom.ts       ALL room logic — reads/writes the Postgres tables and
+                         subscribes to their changes; recovers on a dropped socket
 src/lib/stats.ts         average / consensus, spectators excluded
 src/components/          PokerTable, Seat, PlayingCard, ChipStack, FeltEmblem, HandDeck, StoryBar, TopBar, JoinModal
 src/app/room/[roomId]/   the table
+supabase/migrations/     the schema (tables, RLS, revealed_votes RPC). Run it once
+                         against the project — see supabase/README.md
 ```
 
-Route is already parameterised: `/room/anything` is its own independent channel, so several teams can play in parallel today. There is just no lobby UI yet.
+Route is already parameterised: `/room/anything` is its own independent room row, so several teams can play in parallel today. There is just no lobby UI yet.
 
 ## Rules that must not regress
 
-**A vote never leaves the browser before the reveal.** The presence payload carries `hasVoted: true` but `vote: null`; only when the round is revealed does each client re-publish its payload with the value. Do not "simplify" this by always sending the vote and hiding it in the UI — that would let anyone read other people's votes off the WebSocket.
+**A vote value is never readable before the reveal.** It is written straight to the `votes` table, but that table has no select grant and no select policy — the only way to read a value is `revealed_votes()`, which returns it only once `rooms.revealed` is true (and only for the current `rev`). The `participants` row carries `has_voted` but never the value. Do not "simplify" by exposing votes over Realtime or reading the table directly — that defeats the hidden vote.
 
 **Chip colour must not encode the vote before the reveal.** Every stack on the felt uses `chip-hidden` while the round is open; `chipTone()` only picks a denomination colour once `showResults` is true. Colouring by value earlier would let anyone read the estimates off the table and defeat the hidden vote above.
 
-**The pot is never settled on a partial round.** `REVEAL_SETTLE_TIMEOUT_MS` opens the table when a straggler is slow, but `settlePot` must wait for `awaitingVotes` to be false. Paying out on whichever votes happened to have arrived hands chips to the wrong player — the average moves the moment the last vote lands. The award is also guarded by `rev`, persisted to `sessionStorage`, because otherwise a refresh during a revealed round pays the same pot twice. Both of these were live bugs, not hypotheticals.
+**The pot is settled once, from the whole round.** `showResults` is only true when the round is revealed AND `revealed_votes()` has returned, so `settlePot` always runs over the full vote set — it never pays out mid-arrival. The award is guarded by `rev`, persisted to `sessionStorage`, because otherwise a refresh during a revealed round pays the same pot twice. That was a live bug, not a hypothetical.
 
 **Spectators never count.** Not in the average, not in the "x / y voted" counter. That is the whole point of the role (typically the PM).
 
 **The spectator is the facilitator.** Only they can edit the story, reveal, and start a new round; the people estimating only estimate. Fallback: if the room has no spectator at all, the longest-seated player (the one with the star) takes over the controls, otherwise the table would be stuck forever.
 
-**The reveal is atomic.** Because each client only re-publishes its vote after the round flips, the values arrive one payload at a time. `useRoom` therefore exposes two flags: `revealed` (round state — locks voting immediately) and `showResults` (every voter's value has landed). Cards and the average are driven by `showResults` only; wiring them back to `revealed` would make the table turn card by card and the average jump with each arrival. A stuck client can't hold the table forever — `REVEAL_SETTLE_TIMEOUT_MS` shows whatever arrived after 3s.
+**The reveal is atomic.** `useRoom` exposes two flags: `revealed` (round state — locks voting immediately) and `showResults` (revealed AND the values are in, i.e. `revealedRev === rev`). Cards and the average are driven by `showResults` only, so the whole table turns in one go rather than card by card. Because votes now arrive as a single RPC result, there is no per-vote trickle to wait out.
 
-**One presence key is one player.** Supabase can keep several refs under a key while a superseded one expires, so the sync handler takes the last ref per key instead of flattening them. Flattening seats the same person twice and trips React's duplicate-key warning.
+**A new round is a `rev` bump.** `reset` / deck change set `revealed: false` and `rev: rev + 1`; a vote or `has_voted` flag from an older `rev` simply stops counting (both carry the `rev` they were cast at). So opening a round needs no cleanup writes. Editing the story or the timer must NOT bump `rev` — that would wrongly clear votes.
 
-**Round convergence uses a Lamport counter.** Every round change carries `rev`, and the highest `rev` wins. This is what keeps clients in sync when two people act at the same moment, and what lets a late joiner catch up through presence. Editing the story bumps `rev` too, but must NOT clear votes — only a flip of `revealed` does that.
+**The database is the single source of truth.** Clients never negotiate state with each other; they write to Postgres and read it back through Realtime. On any (re)connect, `useRoom` re-reads `rooms` + `participants` (+ `revealed_votes` if revealed) so a client that dropped its socket reconciles to the truth instead of drifting. Do not reintroduce peer-to-peer round state (presence/broadcast gossip) — that is exactly the desync this replaced.
 
 ## The chip game
 
@@ -63,16 +66,17 @@ they neither ante nor play. The running total sits on each name plate where the
 old table kept the chip count, and the leader wears a crown.
 
 Nobody arbitrates. Every client runs `settlePot` over the same votes at the same
-moment and reaches the same answer, then adjusts **only its own** counter and
-publishes it through presence. That is why there is no new message type — and
-why a client that somehow disagreed could not corrupt anybody else's tally.
+moment and reaches the same answer, then writes **only its own** `chips` back to
+its `participants` row. Realtime carries the new total to everyone, and a client
+that somehow disagreed could not corrupt anybody else's tally.
 
 Note that with exactly two estimators every round is a tie, because the mean of
 two numbers is equidistant from both. The game only gets interesting from three
 people up.
 
-Totals live in `sessionStorage`, so they survive a refresh but not a closed tab.
-There is no "end of planning" event; the tally simply stands.
+Totals live in the `participants.chips` column, so they survive a refresh (and
+even a closed tab, until the seat is swept). There is no "end of planning" event;
+the tally simply stands.
 
 ## State of play
 
