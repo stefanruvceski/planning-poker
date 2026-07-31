@@ -28,6 +28,21 @@ export default function PlayingCard({ value, revealed, hasVoted, size = "sm" }: 
     );
   }
 
+  // Revealed, but this player's value never reached us - a client that was slow
+  // to adopt the reveal, or that blipped off presence mid-round. Show it as a
+  // vote that didn't land, never a blank card face: a blank face reads as a real
+  // (empty) estimate and is exactly the "card stuck as if someone voted" bug.
+  if (revealed && value === null) {
+    return (
+      <div
+        className={`${dims} flex items-center justify-center rounded-lg border-2 border-dashed border-amber-300/45 bg-black/25 font-bold text-amber-300/70`}
+        aria-label="Vote didn't arrive"
+      >
+        …
+      </div>
+    );
+  }
+
   return (
     <div className={`${dims} [perspective:800px]`}>
       <motion.div
