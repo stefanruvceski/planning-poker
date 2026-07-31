@@ -75,6 +75,10 @@ const REVEAL_SETTLE_TIMEOUT_MS = 3000;
  */
 const PRESENCE_GRACE_MS = 4000;
 
+/** How long to wait before rebuilding a channel that dropped, so a flapping
+ *  connection backs off instead of hammering rejoins. */
+const RECONNECT_DELAY_MS = 2000;
+
 /** Chips outlive a refresh, the way the seat does. */
 const chipsKey = (roomId: string) => `pp:${roomId}:chips`;
 /** And so does the round they were last paid for, or reloading pays twice. */
@@ -193,12 +197,9 @@ export function useRoom(roomId: string, me: Identity | null) {
   useEffect(() => {
     if (!me) return;
 
-    const ch = supabase.channel(`room:${roomId}`, {
-      config: { presence: { key: me.id } },
-    });
-    channel.current = ch;
-
+    let disposed = false;
     let sweep: ReturnType<typeof setTimeout> | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
 
     /**
      * Rebuild the table from the current presence snapshot, but through the
@@ -208,6 +209,8 @@ export function useRoom(roomId: string, me: Identity | null) {
      * still cleared even if no further sync arrives.
      */
     const recompute = () => {
+      const ch = channel.current;
+      if (!ch) return;
       // One key is one player, but Supabase can hold several refs under a key
       // while a superseded one expires - the last ref is the current payload.
       const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
@@ -229,34 +232,89 @@ export function useRoom(roomId: string, me: Identity | null) {
       if (hasGraceHold(roster.current, now)) sweep = setTimeout(recompute, PRESENCE_GRACE_MS + 100);
     };
 
-    ch.on("presence", { event: "sync" }, () => {
-      recompute();
-
-      // A late joiner (or someone who missed a broadcast) catches up here.
+    /** A late joiner (or someone who missed a broadcast) catches up here. */
+    const catchUp = () => {
+      const ch = channel.current;
+      if (!ch) return;
       const rows = Object.values(ch.presenceState<Presence>()).flatMap((refs) => refs.slice(-1));
       const newest = rows.reduce<Round>(
         (best, r) => (r.rev > best.rev ? r : best),
         { rev: -1, revealed: false, story: "", deckId: local.current.deckId, deadline: local.current.deadline }
       );
       if (newest.rev > local.current.rev) applyRound(newest);
-    });
+    };
 
-    ch.on("broadcast", { event: "round" }, ({ payload }) => {
-      const next = payload as Round;
-      if (next.rev > local.current.rev) applyRound(next);
-    });
+    const connect = () => {
+      if (disposed) return;
+      const ch = supabase.channel(`room:${roomId}`, {
+        config: { presence: { key: me.id } },
+      });
+      channel.current = ch;
 
-    ch.subscribe((status) => {
-      const live = status === "SUBSCRIBED";
-      setConnected(live);
-      if (live) push();
-    });
+      ch.on("presence", { event: "sync" }, () => {
+        recompute();
+        catchUp();
+      });
+
+      ch.on("broadcast", { event: "round" }, ({ payload }) => {
+        const next = payload as Round;
+        if (next.rev > local.current.rev) applyRound(next);
+      });
+
+      ch.subscribe((status) => {
+        // A callback from a channel we've already torn down (a stale CLOSED as we
+        // rebuild) must not touch state or schedule another reconnect.
+        if (channel.current !== ch) return;
+        if (status === "SUBSCRIBED") {
+          setConnected(true);
+          push(); // re-publish our seat + current round so peers re-converge
+          return;
+        }
+        setConnected(false);
+        // The socket dropped - a laptop sleep, a network switch, a backgrounded
+        // tab - and Supabase left the channel errored instead of rejoining it.
+        // That is what strands a client on conn=false forever (seen in the debug
+        // panel: one side revealed, the other still voting). Rebuild the channel
+        // on a short backoff so it actually recovers.
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          if (retry) clearTimeout(retry);
+          retry = setTimeout(reconnect, RECONNECT_DELAY_MS);
+        }
+      });
+    };
+
+    const reconnect = () => {
+      if (disposed) return;
+      const stale = channel.current;
+      channel.current = null;
+      if (stale) void supabase.removeChannel(stale);
+      // Make sure the underlying socket is alive; a fresh channel then rejoins.
+      supabase.realtime.connect();
+      connect();
+    };
+
+    // Returning to a backgrounded tab, or the network coming back, is the usual
+    // moment a dead socket needs a shove. Rejoin if we are not cleanly joined.
+    const onWake = () => {
+      if (disposed || document.visibilityState !== "visible") return;
+      supabase.realtime.connect();
+      if (channel.current?.state !== "joined") reconnect();
+    };
+
+    connect();
+    window.addEventListener("online", onWake);
+    document.addEventListener("visibilitychange", onWake);
 
     return () => {
+      disposed = true;
       if (sweep) clearTimeout(sweep);
+      if (retry) clearTimeout(retry);
+      window.removeEventListener("online", onWake);
+      document.removeEventListener("visibilitychange", onWake);
       roster.current = new Map();
+      const ch = channel.current;
       channel.current = null;
-      void supabase.removeChannel(ch);
+      if (ch) void supabase.removeChannel(ch);
     };
   }, [roomId, me, applyRound, push]);
 
