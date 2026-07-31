@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import DebugPanel from "@/components/DebugPanel";
 import HandDeck from "@/components/HandDeck";
 import JoinModal from "@/components/JoinModal";
 import PokerTable from "@/components/PokerTable";
@@ -19,6 +20,11 @@ export default function RoomPage() {
 
   const [me, setMe] = useState<Identity | null>(null);
   const [ready, setReady] = useState(false); // sessionStorage read, avoids a modal flash
+  const [debug, setDebug] = useState(false); // ?debug in the URL turns on the diagnostics panel
+
+  useEffect(() => {
+    setDebug(new URLSearchParams(window.location.search).has("debug"));
+  }, []);
 
   // Identity lives per tab, so a refresh keeps your seat but a second tab is a second player.
   useEffect(() => {
@@ -130,6 +136,19 @@ export default function RoomPage() {
         spectator={me?.role === "spectator"}
         onPick={vote}
       />
+
+      {debug && (
+        <DebugPanel
+          meId={me?.id ?? ""}
+          connected={connected}
+          revealed={revealed}
+          showResults={showResults}
+          myVote={myVote}
+          canControl={canControl}
+          facilitatorId={facilitatorId}
+          players={players}
+        />
+      )}
 
       {ready && !me && <JoinModal roomName={displayName} onJoin={join} />}
 
