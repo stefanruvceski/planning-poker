@@ -68,6 +68,11 @@ interface Round {
 const HEARTBEAT_MS = 12_000;
 const ONLINE_TTL_MS = 40_000;
 
+/** Reconcile straight from the database this often, as a safety net under the
+ *  realtime stream: even if a change event is missed or delayed, the table
+ *  converges within a couple of seconds. Realtime is still the fast path. */
+const POLL_MS = 2500;
+
 /** Backoff before rebuilding a realtime channel that dropped. */
 const RECONNECT_DELAY_MS = 2000;
 
@@ -145,6 +150,18 @@ export function useRoom(roomId: string, me: Identity | null) {
   const applyRoom = useCallback(
     (row: RoomRow) => {
       const prev = round.current;
+      const rowDeadline = row.deadline ? Date.parse(row.deadline) : null;
+      // Polling calls this every couple of seconds; skip the state churn when the
+      // room row hasn't actually changed.
+      if (
+        prev.rev === row.rev &&
+        prev.revealed === row.revealed &&
+        prev.story === row.story &&
+        prev.deckId === row.deck_id &&
+        prev.deadline === rowDeadline
+      ) {
+        return;
+      }
       const newRound = row.rev !== prev.rev && !row.revealed;
       const deckChanged = row.deck_id !== prev.deckId;
       round.current = {
@@ -258,6 +275,7 @@ export function useRoom(roomId: string, me: Identity | null) {
     let disposed = false;
     let retry: ReturnType<typeof setTimeout> | null = null;
     let beat: ReturnType<typeof setInterval> | null = null;
+    let poll: ReturnType<typeof setInterval> | null = null;
 
     /** Create the room if absent (seeding the deck), then take my seat. */
     const ensurePresence = async () => {
@@ -367,6 +385,13 @@ export function useRoom(roomId: string, me: Identity | null) {
 
     connect();
     beat = setInterval(heartbeat, HEARTBEAT_MS);
+    // Safety net under realtime: reconcile the room + roster straight from the
+    // database on a short interval, so a missed or dropped change event never
+    // leaves the table wrong for more than a couple of seconds.
+    poll = setInterval(() => {
+      void fns.current.loadRoom();
+      void fns.current.loadParticipants();
+    }, POLL_MS);
     window.addEventListener("online", onWake);
     document.addEventListener("visibilitychange", onWake);
     // Best-effort clean exit so a closed tab frees its seat immediately rather
@@ -380,6 +405,7 @@ export function useRoom(roomId: string, me: Identity | null) {
       disposed = true;
       if (retry) clearTimeout(retry);
       if (beat) clearInterval(beat);
+      if (poll) clearInterval(poll);
       window.removeEventListener("online", onWake);
       document.removeEventListener("visibilitychange", onWake);
       window.removeEventListener("pagehide", onLeave);
@@ -401,6 +427,15 @@ export function useRoom(roomId: string, me: Identity | null) {
       if (!me || round.current.revealed || me.role === "spectator") return;
       const r = round.current.rev;
       const clearing = myVote === value;
+
+      // Reflect my own vote locally at once, so my card lights up and the counter
+      // ticks without waiting for the write to echo back over realtime.
+      const mine = roster.current.get(me.id);
+      if (mine) {
+        roster.current.set(me.id, { ...mine, has_voted: !clearing, voted_rev: r });
+        rebuildPlayers();
+      }
+
       if (clearing) {
         setMyVote(null);
         sessionStorage.removeItem(voteKey(roomId));
@@ -423,7 +458,7 @@ export function useRoom(roomId: string, me: Identity | null) {
           .eq("player_id", me.id);
       }
     },
-    [me, myVote, roomId]
+    [me, myVote, roomId, rebuildPlayers]
   );
 
   const patchRoom = useCallback(

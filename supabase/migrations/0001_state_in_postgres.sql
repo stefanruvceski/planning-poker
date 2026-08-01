@@ -108,7 +108,15 @@ grant select, insert, update, delete on public.participants to anon;
 grant insert, update, delete on public.votes to anon;
 grant execute on function public.revealed_votes(text) to anon;
 
--- 5. Realtime: rooms + participants stream to clients. votes MUST NOT be added
+-- 5. Realtime under RLS needs REPLICA IDENTITY FULL, or UPDATE/DELETE change
+--    events are silently dropped (INSERT still arrives, which is why players can
+--    see each other join but never see a vote land or a reveal). This is the
+--    single most important line for the live table to work.
+alter table public.rooms        replica identity full;
+alter table public.participants replica identity full;
+alter table public.votes        replica identity full;
+
+-- 6. Realtime: rooms + participants stream to clients. votes MUST NOT be added
 --    to the publication, or the estimates would leak inside the change payloads.
 do $$
 begin
