@@ -109,6 +109,9 @@ export function useRoom(roomId: string, me: Identity | null) {
   const [revealedRev, setRevealedRev] = useState(-1);
   /** Bumped by the heartbeat tick so the online filter re-evaluates over time. */
   const [, setTick] = useState(0);
+  /** Last database error, surfaced in the debug panel so a failing write (RLS,
+   *  a missing migration) is visible instead of silently swallowed. */
+  const [dbError, setDbError] = useState<string | null>(null);
 
   const channel = useRef<RealtimeChannel | null>(null);
   /** Local mirror of the participants table, keyed by player id. */
@@ -144,6 +147,15 @@ export function useRoom(roomId: string, me: Identity | null) {
     setDeckId(chosen);
     sessionStorage.setItem(deckKey(roomId), chosen);
   }, [roomId]);
+
+  /** Record a database error so it shows in the debug panel and the console,
+   *  instead of being silently swallowed by a fire-and-forget write. */
+  const note = useCallback((label: string, error: unknown) => {
+    if (!error) return;
+    const msg = (error as { message?: string })?.message ?? String(error);
+    console.error(`[pp] ${label}:`, error);
+    setDbError(`${label}: ${msg}`);
+  }, []);
 
   /** Adopt a room row into local round state, clearing my vote when a fresh
    *  round opens (a new rev while not revealed) or the deck changes. */
@@ -215,31 +227,34 @@ export function useRoom(roomId: string, me: Identity | null) {
    *  first load and after any reconnect, so the roster is always reconciled to
    *  the database rather than trusting a possibly-missed stream of changes. */
   const loadParticipants = useCallback(async () => {
-    const { data } = await supabase.from("participants").select("*").eq("room_id", roomId);
+    const { data, error } = await supabase.from("participants").select("*").eq("room_id", roomId);
+    if (error) note("load participants", error);
     if (!data) return;
     const next = new Map<string, ParticipantRow>();
     for (const row of data as ParticipantRow[]) next.set(row.player_id, row);
     roster.current = next;
     rebuildPlayers();
-  }, [roomId, rebuildPlayers]);
+  }, [roomId, rebuildPlayers, note]);
 
   /** Read the room row (creating it lazily if this is the first person in). */
   const loadRoom = useCallback(async () => {
-    const { data } = await supabase.from("rooms").select("*").eq("id", roomId).maybeSingle();
+    const { data, error } = await supabase.from("rooms").select("*").eq("id", roomId).maybeSingle();
+    if (error) note("load room", error);
     if (data) applyRoom(data as RoomRow);
-  }, [roomId, applyRoom]);
+  }, [roomId, applyRoom, note]);
 
   /** Pull the revealed votes for the current round through the gated RPC. */
   const loadRevealed = useCallback(async () => {
     const r = round.current.rev;
-    const { data } = await supabase.rpc("revealed_votes", { p_room_id: roomId });
+    const { data, error } = await supabase.rpc("revealed_votes", { p_room_id: roomId });
+    if (error) note("load revealed", error);
     const map = new Map<string, string>();
     for (const row of (data ?? []) as { player_id: string; value: string }[]) {
       map.set(row.player_id, row.value);
     }
     setRevealedVotes(map);
     setRevealedRev(r);
-  }, [roomId]);
+  }, [roomId, note]);
 
   // When the round flips to revealed, fetch the values once. When it closes,
   // drop them so a stale set never leaks into the next round.
@@ -279,11 +294,12 @@ export function useRoom(roomId: string, me: Identity | null) {
 
     /** Create the room if absent (seeding the deck), then take my seat. */
     const ensurePresence = async () => {
-      await supabase
+      const room = await supabase
         .from("rooms")
         .upsert({ id: roomId, deck_id: round.current.deckId }, { onConflict: "id", ignoreDuplicates: true });
+      note("create room", room.error);
       // Omit chips / joined_at so a refresh keeps them; last_seen marks us alive.
-      await supabase.from("participants").upsert(
+      const seat = await supabase.from("participants").upsert(
         {
           room_id: roomId,
           player_id: me.id,
@@ -294,6 +310,7 @@ export function useRoom(roomId: string, me: Identity | null) {
         },
         { onConflict: "room_id,player_id" }
       );
+      note("take seat", seat.error);
     };
 
     /** Mark myself alive and sweep out seats that stopped marking themselves. */
@@ -439,32 +456,39 @@ export function useRoom(roomId: string, me: Identity | null) {
       if (clearing) {
         setMyVote(null);
         sessionStorage.removeItem(voteKey(roomId));
-        void supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id);
+        void supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id).then((res) => note("clear vote", res.error));
         void supabase
           .from("participants")
           .update({ has_voted: false, voted_rev: r, last_seen: iso() })
           .eq("room_id", roomId)
-          .eq("player_id", me.id);
+          .eq("player_id", me.id)
+          .then((res) => note("clear has_voted", res.error));
       } else {
         setMyVote(value);
         sessionStorage.setItem(voteKey(roomId), JSON.stringify({ rev: r, value }));
         void supabase
           .from("votes")
-          .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" });
+          .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" })
+          .then((res) => note("cast vote", res.error));
         void supabase
           .from("participants")
           .update({ has_voted: true, voted_rev: r, last_seen: iso() })
           .eq("room_id", roomId)
-          .eq("player_id", me.id);
+          .eq("player_id", me.id)
+          .then((res) => note("set has_voted", res.error));
       }
     },
-    [me, myVote, roomId, rebuildPlayers]
+    [me, myVote, roomId, rebuildPlayers, note]
   );
 
   const patchRoom = useCallback(
     (patch: Partial<RoomRow>) =>
-      void supabase.from("rooms").update({ ...patch, updated_at: iso() }).eq("id", roomId),
-    [roomId]
+      void supabase
+        .from("rooms")
+        .update({ ...patch, updated_at: iso() })
+        .eq("id", roomId)
+        .then((res) => note("update room", res.error)),
+    [roomId, note]
   );
 
   const reveal = useCallback(() => patchRoom({ revealed: true, deadline: null }), [patchRoom]);
@@ -594,6 +618,8 @@ export function useRoom(roomId: string, me: Identity | null) {
     canControl,
     facilitatorId,
     winnerIds,
+    /** Last database error, or null - shown in the debug panel. */
+    dbError,
     vote,
     reveal,
     reset,
