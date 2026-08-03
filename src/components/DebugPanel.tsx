@@ -4,7 +4,7 @@ import type { Player } from "@/lib/types";
 
 /** Bumped on each debug-related deploy, shown in the panel, so a screenshot
  *  tells us whether the running bundle is the latest one. */
-const BUILD = "db-6";
+const BUILD = "db-7";
 
 interface Props {
   meId: string;

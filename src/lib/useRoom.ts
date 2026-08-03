@@ -553,8 +553,14 @@ export function useRoom(roomId: string, me: Identity | null) {
       setWinnerIds([]);
       return;
     }
-    const stats = computeStats(players, deck);
-    const { winners, each } = settlePot(players, deck, stats.average);
+    // Overlay the revealed votes onto the players. `players` picks up the vote
+    // values one render after showResults flips, so settling over it directly
+    // would run once with empty votes - average "—", no winner - and latch that
+    // for the round (recap and pot both). Reading straight from revealedVotes
+    // makes the result correct on the first run.
+    const settled = players.map((p) => ({ ...p, vote: revealedVotes.get(p.id) ?? p.vote }));
+    const stats = computeStats(settled, deck);
+    const { winners, each } = settlePot(settled, deck, stats.average);
     setWinnerIds(winners);
 
     if (recapRev.current !== rev) {
@@ -584,7 +590,7 @@ export function useRoom(roomId: string, me: Identity | null) {
         .rpc("award_chips", { p_room_id: roomId, p_player_id: me.id, p_delta: each })
         .then((res) => note("award chips", res.error));
     }
-  }, [showResults, players, deck, me, rev, roomId, note]);
+  }, [showResults, players, revealedVotes, deck, me, rev, roomId, note]);
 
   /**
    * Only the spectator runs the session (reveal / new round / story). If nobody
