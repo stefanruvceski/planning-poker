@@ -99,6 +99,20 @@ as $$
   delete from public.votes where room_id = p_room_id and player_id = p_player_id;
 $$;
 
+-- 4c. Award chips atomically. Each client pays only its own seat, guarded by the
+--     round so a pot is never settled twice; an atomic increment avoids a
+--     read-modify-write race with the roster poll.
+create or replace function public.award_chips(p_room_id text, p_player_id text, p_delta integer)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  update public.participants
+     set chips = chips + p_delta
+   where room_id = p_room_id and player_id = p_player_id;
+$$;
+
 -- Row level security. There is no auth in the MVP, so the anon (publishable)
 -- key does everything - the same trust model as the old channel, where any
 -- client could publish anything. The one invariant that MUST hold is that a
@@ -136,6 +150,7 @@ grant insert, update, delete on public.votes to anon;
 grant execute on function public.revealed_votes(text) to anon;
 grant execute on function public.cast_vote(text, text, text, integer) to anon;
 grant execute on function public.clear_vote(text, text) to anon;
+grant execute on function public.award_chips(text, text, integer) to anon;
 
 -- 5. Realtime under RLS needs REPLICA IDENTITY FULL, or UPDATE/DELETE change
 --    events are silently dropped (INSERT still arrives, which is why players can
