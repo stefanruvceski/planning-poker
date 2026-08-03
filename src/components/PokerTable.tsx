@@ -22,6 +22,9 @@ interface Props {
    * instead of card by card as the payloads trickle in.
    */
   showResults: boolean;
+  /** Play the 3-2-1 only for a reveal witnessed live, not on joining a room
+   *  whose round was already revealed. */
+  animateReveal: boolean;
   /** Whose seat carries the dealer button. */
   facilitatorId: string;
   /** Who takes this round's pot. */
@@ -178,6 +181,7 @@ export default function PokerTable({
   meId,
   canControl,
   showResults,
+  animateReveal,
   facilitatorId,
   winnerIds,
   onReveal,
@@ -214,6 +218,12 @@ export default function PokerTable({
       setCountdownDone(false);
       return;
     }
+    // Joined into an already-revealed round: skip the 3-2-1 and show the cards
+    // straight away (they'll turn as soon as the values are in).
+    if (!animateReveal) {
+      setCountdownDone(true);
+      return;
+    }
     setCount(3);
     setCountdownDone(false);
     const timers = [
@@ -222,7 +232,7 @@ export default function PokerTable({
       window.setTimeout(() => setCountdownDone(true), REVEAL_STEP_MS * 3),
     ];
     return () => timers.forEach(clearTimeout);
-  }, [room.revealed]);
+  }, [room.revealed, animateReveal]);
 
   // The moment the table actually turns: the count has finished AND every
   // vote has landed. Drives the cards, chips and numbers - never room.revealed.
@@ -253,7 +263,14 @@ export default function PokerTable({
             <StoryBar story={room.story ?? ""} editable={canControl} onChange={onStory} />
 
             {room.revealed && !showdown ? (
-              <RevealCountdown n={count} />
+              animateReveal ? (
+                <RevealCountdown n={count} />
+              ) : (
+                // Joined mid-round: brief placeholder until the values land.
+                <div className="table-label rounded-full bg-black/30 px-4 py-1.5 text-xs text-white/70 sm:text-sm">
+                  Revealing…
+                </div>
+              )
             ) : !room.revealed ? (
               <>
                 {deadline !== null && <Countdown deadline={deadline} />}
