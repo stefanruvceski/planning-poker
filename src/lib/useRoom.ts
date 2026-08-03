@@ -446,37 +446,43 @@ export function useRoom(roomId: string, me: Identity | null) {
       const clearing = myVote === value;
 
       // Reflect my own vote locally at once, so my card lights up and the counter
-      // ticks without waiting for the write to echo back over realtime.
+      // ticks without waiting for the write to echo back.
       const mine = roster.current.get(me.id);
       if (mine) {
         roster.current.set(me.id, { ...mine, has_voted: !clearing, voted_rev: r });
         rebuildPlayers();
       }
+      setMyVote(clearing ? null : value);
+      if (clearing) sessionStorage.removeItem(voteKey(roomId));
+      else sessionStorage.setItem(voteKey(roomId), JSON.stringify({ rev: r, value }));
 
-      if (clearing) {
-        setMyVote(null);
-        sessionStorage.removeItem(voteKey(roomId));
-        void supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id).then((res) => note("clear vote", res.error));
-        void supabase
+      void (async () => {
+        if (clearing) {
+          const d = await supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id);
+          note("clear vote", d.error);
+        } else {
+          const u = await supabase
+            .from("votes")
+            .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" });
+          note("cast vote", u.error);
+        }
+        // .select() so we can tell a real update from one that matched no row -
+        // a silent 0-row update is the classic "write succeeds but nothing
+        // changes" case, and it would never surface as an error.
+        const p = await supabase
           .from("participants")
-          .update({ has_voted: false, voted_rev: r, last_seen: iso() })
+          .update({ has_voted: !clearing, voted_rev: r, last_seen: iso() })
           .eq("room_id", roomId)
           .eq("player_id", me.id)
-          .then((res) => note("clear has_voted", res.error));
-      } else {
-        setMyVote(value);
-        sessionStorage.setItem(voteKey(roomId), JSON.stringify({ rev: r, value }));
-        void supabase
-          .from("votes")
-          .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" })
-          .then((res) => note("cast vote", res.error));
-        void supabase
-          .from("participants")
-          .update({ has_voted: true, voted_rev: r, last_seen: iso() })
-          .eq("room_id", roomId)
-          .eq("player_id", me.id)
-          .then((res) => note("set has_voted", res.error));
-      }
+          .select();
+        note("set has_voted", p.error);
+        if (!p.error && (!p.data || p.data.length === 0)) {
+          note("set has_voted", "no participant row matched my id — seat missing?");
+        }
+        // Reconcile straight from the database, so my own vote reflects the
+        // persisted truth immediately even if realtime never delivers.
+        await fns.current.loadParticipants();
+      })();
     },
     [me, myVote, roomId, rebuildPlayers, note]
   );
