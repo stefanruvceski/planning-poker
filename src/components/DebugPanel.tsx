@@ -2,6 +2,10 @@
 
 import type { Player } from "@/lib/types";
 
+/** Bumped on each debug-related deploy, shown in the panel, so a screenshot
+ *  tells us whether the running bundle is the latest one. */
+const BUILD = "db-4";
+
 interface Props {
   meId: string;
   connected: boolean;
@@ -11,6 +15,7 @@ interface Props {
   canControl: boolean;
   facilitatorId: string;
   players: Player[];
+  dbError?: string | null;
 }
 
 /**
@@ -30,11 +35,17 @@ export default function DebugPanel({
   canControl,
   facilitatorId,
   players,
+  dbError,
 }: Props) {
   const short = (id: string) => id.slice(0, 4);
   return (
     <div className="pointer-events-none fixed left-2 top-16 z-50 max-w-[92vw] rounded-lg border border-white/20 bg-black/85 p-2 font-mono text-[10px] leading-tight text-white/90 shadow-xl sm:text-[11px]">
-      <div className="mb-1 font-bold text-emerald-300">DEBUG</div>
+      <div className="mb-1 font-bold text-emerald-300">DEBUG · build {BUILD}</div>
+      {dbError && (
+        <div className="mb-1 rounded bg-red-600/80 px-1 py-0.5 font-bold text-white">
+          DB ERROR: {dbError}
+        </div>
+      )}
       <div>
         conn=<b className={connected ? "text-emerald-400" : "text-red-400"}>{String(connected)}</b>{" "}
         revealed=<b>{String(revealed)}</b> showResults=<b>{String(showResults)}</b>
