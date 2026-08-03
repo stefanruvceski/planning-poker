@@ -112,6 +112,10 @@ export function useRoom(roomId: string, me: Identity | null) {
   /** Last database error, surfaced in the debug panel so a failing write (RLS,
    *  a missing migration) is visible instead of silently swallowed. */
   const [dbError, setDbError] = useState<string | null>(null);
+  /** True only when a reveal happened while I was watching the round open - so
+   *  the 3-2-1 plays for a reveal I witnessed, but NOT when I join a room whose
+   *  round was already revealed before I arrived. */
+  const [animateReveal, setAnimateReveal] = useState(false);
 
   const channel = useRef<RealtimeChannel | null>(null);
   /** Local mirror of the participants table, keyed by player id. */
@@ -122,6 +126,12 @@ export function useRoom(roomId: string, me: Identity | null) {
   const paidRev = useRef(-1);
   /** Round last written to the recap, so a re-render never logs it twice. */
   const recapRev = useRef(-1);
+  /** Set once real room data first loads, so the default initial state isn't
+   *  mistaken for a round I watched. */
+  const hydrated = useRef(false);
+  /** The rev I last saw in an OPEN (not revealed) state - if that same rev then
+   *  reveals, it's a reveal I witnessed and the 3-2-1 should play. */
+  const openRev = useRef<number | null>(null);
 
   // Seed the per-client bits from sessionStorage before anything talks to the
   // database: the deck a new room should be created with, the last paid round,
@@ -165,6 +175,18 @@ export function useRoom(roomId: string, me: Identity | null) {
     (row: RoomRow) => {
       const prev = round.current;
       const rowDeadline = row.deadline ? Date.parse(row.deadline) : null;
+
+      // Track whether I've witnessed this round while it was open, so a reveal I
+      // saw happen plays the 3-2-1 but joining into an already-revealed round
+      // does not. Done before the unchanged-guard so it still runs on first load.
+      if (!hydrated.current) {
+        // First real room data: if it's already revealed, I joined mid-round.
+        openRev.current = row.revealed ? null : row.rev;
+        hydrated.current = true;
+      } else if (!row.revealed) {
+        openRev.current = row.rev;
+      }
+
       // Polling calls this every couple of seconds; skip the state churn when the
       // room row hasn't actually changed.
       if (
@@ -176,6 +198,12 @@ export function useRoom(roomId: string, me: Identity | null) {
       ) {
         return;
       }
+
+      // Animate only a reveal of a round I saw open. A join into an already
+      // revealed round (openRev never matched this rev) shows the cards at once.
+      if (row.revealed) setAnimateReveal(openRev.current === row.rev);
+      else setAnimateReveal(false);
+
       const newRound = row.rev !== prev.rev && !row.revealed;
       const deckChanged = row.deck_id !== prev.deckId;
       round.current = {
@@ -632,6 +660,8 @@ export function useRoom(roomId: string, me: Identity | null) {
     revealed,
     /** Display gate: true only once the whole round can be shown at once. */
     showResults,
+    /** Whether the 3-2-1 should play - only for a reveal I actually witnessed. */
+    animateReveal,
     story,
     deckId,
     deadline,
