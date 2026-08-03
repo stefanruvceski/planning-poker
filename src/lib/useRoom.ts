@@ -444,6 +444,7 @@ export function useRoom(roomId: string, me: Identity | null) {
       if (!me || round.current.revealed || me.role === "spectator") return;
       const r = round.current.rev;
       const clearing = myVote === value;
+      setDbError(null); // reflect this attempt, not a stale one
 
       // Reflect my own vote locally at once, so my card lights up and the counter
       // ticks without waiting for the write to echo back.
@@ -457,13 +458,18 @@ export function useRoom(roomId: string, me: Identity | null) {
       else sessionStorage.setItem(voteKey(roomId), JSON.stringify({ rev: r, value }));
 
       void (async () => {
+        // The vote value is written through a security-definer RPC, never
+        // straight to the table, so it doesn't depend on a client write policy.
         if (clearing) {
-          const d = await supabase.from("votes").delete().eq("room_id", roomId).eq("player_id", me.id);
+          const d = await supabase.rpc("clear_vote", { p_room_id: roomId, p_player_id: me.id });
           note("clear vote", d.error);
         } else {
-          const u = await supabase
-            .from("votes")
-            .upsert({ room_id: roomId, player_id: me.id, value, round_rev: r, updated_at: iso() }, { onConflict: "room_id,player_id" });
+          const u = await supabase.rpc("cast_vote", {
+            p_room_id: roomId,
+            p_player_id: me.id,
+            p_value: value,
+            p_round_rev: r,
+          });
           note("cast vote", u.error);
         }
         // .select() so we can tell a real update from one that matched no row -
