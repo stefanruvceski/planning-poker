@@ -127,8 +127,10 @@ export function useRoom(roomId: string, me: Identity | null) {
   // database: the deck a new room should be created with, the last paid round,
   // my own current selection, and the recap so far.
   useEffect(() => {
-    const paid = Number(sessionStorage.getItem(paidKey(roomId)));
-    if (Number.isFinite(paid)) paidRev.current = paid;
+    // NB: check for null explicitly - Number(null) is 0, which would wrongly
+    // mark round 0 as already paid and skip its pot.
+    const rawPaid = sessionStorage.getItem(paidKey(roomId));
+    if (rawPaid !== null && Number.isFinite(Number(rawPaid))) paidRev.current = Number(rawPaid);
 
     try {
       const stored = JSON.parse(sessionStorage.getItem(recapKey(roomId)) ?? "[]") as RecapEntry[];
@@ -575,12 +577,14 @@ export function useRoom(roomId: string, me: Identity | null) {
     if (paidRev.current === rev) return;
     paidRev.current = rev;
     sessionStorage.setItem(paidKey(roomId), String(rev));
-    if (winners.includes(me.id)) {
-      const mine = roster.current.get(me.id);
-      const chips = (mine?.chips ?? 0) + each;
-      void supabase.from("participants").update({ chips }).eq("room_id", roomId).eq("player_id", me.id);
+    if (winners.includes(me.id) && each > 0) {
+      // Atomic increment via RPC, so a concurrent roster poll can't clobber the
+      // new total with a stale read, and each client only ever moves its own seat.
+      void supabase
+        .rpc("award_chips", { p_room_id: roomId, p_player_id: me.id, p_delta: each })
+        .then((res) => note("award chips", res.error));
     }
-  }, [showResults, players, deck, me, rev, roomId]);
+  }, [showResults, players, deck, me, rev, roomId, note]);
 
   /**
    * Only the spectator runs the session (reveal / new round / story). If nobody
