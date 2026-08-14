@@ -91,7 +91,7 @@ const recapKey = (roomId: string) => `pp:${roomId}:recap`;
 const nowMs = () => Date.now();
 const iso = () => new Date().toISOString();
 
-export function useRoom(roomId: string, me: Identity | null) {
+export function useRoom(roomId: string, me: Identity | null, brandId: string) {
   const [players, setPlayers] = useState<Player[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [story, setStoryState] = useState("");
@@ -326,13 +326,14 @@ export function useRoom(roomId: string, me: Identity | null) {
     const ensurePresence = async () => {
       const room = await supabase
         .from("rooms")
-        .upsert({ id: roomId, deck_id: round.current.deckId }, { onConflict: "id", ignoreDuplicates: true });
+        .upsert({ id: roomId, deck_id: round.current.deckId, brand_id: brandId }, { onConflict: "id", ignoreDuplicates: true });
       note("create room", room.error);
       // Omit chips / joined_at so a refresh keeps them; last_seen marks us alive.
       const seat = await supabase.from("participants").upsert(
         {
           room_id: roomId,
           player_id: me.id,
+          brand_id: brandId,
           name: me.name,
           avatar_seed: me.avatarSeed,
           role: me.role,
@@ -464,7 +465,7 @@ export function useRoom(roomId: string, me: Identity | null) {
     // Built once per room + identity; the loaders are reached through fns.current
     // so a reveal never rebuilds the channel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [roomId, me_id, me_role]);
+  }, [roomId, me_id, me_role, brandId]);
 
   // --- Actions. All of them are just writes to the database; realtime carries
   //     the result back to every client, this one included. ---
@@ -491,12 +492,11 @@ export function useRoom(roomId: string, me: Identity | null) {
         // The vote value is written through a security-definer RPC, never
         // straight to the table, so it doesn't depend on a client write policy.
         if (clearing) {
-          const d = await supabase.rpc("clear_vote", { p_room_id: roomId, p_player_id: me.id });
+          const d = await supabase.rpc("clear_vote", { p_room_id: roomId });
           note("clear vote", d.error);
         } else {
           const u = await supabase.rpc("cast_vote", {
             p_room_id: roomId,
-            p_player_id: me.id,
             p_value: value,
             p_round_rev: r,
           });
@@ -615,7 +615,7 @@ export function useRoom(roomId: string, me: Identity | null) {
       // Atomic increment via RPC, so a concurrent roster poll can't clobber the
       // new total with a stale read, and each client only ever moves its own seat.
       void supabase
-        .rpc("award_chips", { p_room_id: roomId, p_player_id: me.id, p_delta: each })
+        .rpc("award_chips", { p_room_id: roomId, p_delta: each })
         .then((res) => note("award chips", res.error));
     }
   }, [showResults, players, revealedVotes, deck, me, rev, roomId, note]);

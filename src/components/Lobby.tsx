@@ -2,14 +2,13 @@
 
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import LogoMark from "@/components/LogoMark";
+import { useEffect, useMemo, useState } from "react";
+import BrandLogo from "@/components/BrandLogo";
 import { DECK_LIST, DEFAULT_DECK_ID } from "@/config/decks";
-import { roomLabel, slugifyRoom, TEAM_ROOMS } from "@/config/room";
+import { makeRoomId, roomLabel, slugifyRoom } from "@/config/room";
 import { readLastRoom } from "@/lib/lastRoom";
-import { usePresenceCounts } from "@/lib/usePresenceCounts";
-
-const TEAM_IDS = TEAM_ROOMS.map((room) => room.id);
+import { useTenant } from "@/lib/tenant";
+import { useRoomCounts } from "@/lib/usePresenceCounts";
 
 /** Live "who's here" badge - only shown once someone is actually at the table. */
 function HereBadge({ count }: { count: number }) {
@@ -23,51 +22,59 @@ function HereBadge({ count }: { count: number }) {
 }
 
 /**
- * Lobby. Landing here instead of dumping everyone into /room/default: the team
- * tables are listed by name with a live head count, there's a one-click way
- * back to the last table you sat at, and anyone can spin up a one-off table by
- * typing a name. The slug is the whole room - no state to create server-side.
- *
- * The deck picker up top applies to whichever table you open - team table, a
- * new one, or a jump-back - so you set the cards here and every link carries
- * them. (Once you're at a table with others, the shared deck wins; ?deck= only
- * seeds a fresh one.)
+ * The brand's lobby. The team list, the name and the logo all come from the
+ * `brands` row for the logged-in user - nothing here is hardcoded per company.
+ * Every table link is brand-qualified so two brands never share a room.
  */
 export default function Lobby() {
   const router = useRouter();
+  const { brand, profile, signOut } = useTenant();
   const [name, setName] = useState("");
   const [deckId, setDeckId] = useState(DEFAULT_DECK_ID);
-  const counts = usePresenceCounts(TEAM_IDS);
+  const counts = useRoomCounts(brand.id);
 
-  // localStorage is only there on the client, so read it after mount to keep
-  // the server and first client render identical.
+  // Team name -> { id (full room id), label }.
+  const teams = useMemo(
+    () => brand.teams.map((team) => ({ id: makeRoomId(brand.id, slugifyRoom(team)), label: team })),
+    [brand.id, brand.teams]
+  );
+
   const [lastRoom, setLastRoom] = useState<string | null>(null);
-  useEffect(() => setLastRoom(readLastRoom()), []);
+  useEffect(() => {
+    const last = readLastRoom();
+    // Only offer a jump-back to a table of THIS brand.
+    setLastRoom(last && last.startsWith(`${brand.id}__`) ? last : null);
+  }, [brand.id]);
 
   const slug = slugifyRoom(name);
-  // The chosen deck rides along in the URL of every link; the default is left
-  // off to keep the common link clean.
   const deckQuery = deckId !== DEFAULT_DECK_ID ? `?deck=${deckId}` : "";
   const withDeck = (path: string) => `${path}${deckQuery}`;
+  const roomHref = (roomId: string) => withDeck(`/room/${roomId}`);
 
   const create = (e: React.FormEvent) => {
     e.preventDefault();
     if (!slug) return;
-    router.push(withDeck(`/room/${slug}`));
+    router.push(roomHref(makeRoomId(brand.id, slug)));
   };
 
   return (
     <main className="flex h-[100dvh] flex-col items-center justify-center overflow-y-auto px-4 py-12">
       <header className="mb-10 flex flex-col items-center gap-3 text-center">
-        <LogoMark className="h-14 w-14 text-[#e9453c]" />
-        <h1 className="text-3xl font-extrabold leading-none tracking-tight">
-          <span className="text-red-500">planning</span>
-          <span className="text-white">poker</span>
-        </h1>
+        <BrandLogo brand={brand} className="h-14 w-14" />
+        <h1 className="text-3xl font-extrabold leading-none tracking-tight text-white">{brand.name}</h1>
         <p className="text-sm text-white/50">Pick your team&rsquo;s table, or open a new one.</p>
       </header>
 
       <div className="w-full max-w-md rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 shadow-2xl">
+        <div className="mb-5 flex items-center justify-between text-xs text-white/40">
+          <span>
+            Signed in as <span className="text-white/70">{profile.display_name}</span>
+          </span>
+          <button onClick={signOut} className="underline transition hover:text-white">
+            sign out
+          </button>
+        </div>
+
         <div className="mb-5 rounded-lg border border-white/10 bg-black/40 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-semibold text-white/70">Deck</span>
@@ -88,7 +95,7 @@ export default function Lobby() {
 
         {lastRoom && (
           <Link
-            href={withDeck(`/room/${lastRoom}`)}
+            href={roomHref(lastRoom)}
             className="mb-5 flex items-center justify-between rounded-lg border border-gold/40 bg-gold/10 px-4 py-3 transition hover:bg-gold/20"
           >
             <span className="flex flex-col leading-tight">
@@ -103,27 +110,33 @@ export default function Lobby() {
         )}
 
         <h2 className="mb-3 text-xs font-bold uppercase tracking-wider text-white/40">Team tables</h2>
-        <ul className="flex flex-col gap-2">
-          {TEAM_ROOMS.map((room) => (
-            <li key={room.id}>
-              <Link
-                href={withDeck(`/room/${room.id}`)}
-                className="group flex items-center justify-between rounded-lg border border-white/5 bg-black/30 px-4 py-3 transition hover:border-gold/60 hover:bg-black/50"
-              >
-                <span className="flex items-center gap-3">
-                  <span className="chip chip-hidden h-6 w-6 shrink-0" aria-hidden="true" />
-                  <span className="font-semibold">{room.label}</span>
-                </span>
-                <span className="flex items-center gap-3">
-                  <HereBadge count={counts[room.id] ?? 0} />
-                  <span className="text-white/30 transition group-hover:translate-x-0.5 group-hover:text-gold">
-                    &rarr;
+        {teams.length === 0 ? (
+          <p className="rounded-lg border border-white/5 bg-black/30 px-4 py-3 text-sm text-white/45">
+            No teams set up for {brand.name} yet — start one below.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-2">
+            {teams.map((team) => (
+              <li key={team.id}>
+                <Link
+                  href={roomHref(team.id)}
+                  className="group flex items-center justify-between rounded-lg border border-white/5 bg-black/30 px-4 py-3 transition hover:border-gold/60 hover:bg-black/50"
+                >
+                  <span className="flex items-center gap-3">
+                    <span className="chip chip-hidden h-6 w-6 shrink-0" aria-hidden="true" />
+                    <span className="font-semibold">{team.label}</span>
                   </span>
-                </span>
-              </Link>
-            </li>
-          ))}
-        </ul>
+                  <span className="flex items-center gap-3">
+                    <HereBadge count={counts[team.id] ?? 0} />
+                    <span className="text-white/30 transition group-hover:translate-x-0.5 group-hover:text-gold">
+                      &rarr;
+                    </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
 
         <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-wider text-white/25">
           <span className="h-px flex-1 bg-white/10" />
@@ -141,7 +154,7 @@ export default function Lobby() {
           />
           {slug && (
             <p className="text-center text-[11px] text-white/35">
-              opens <span className="text-white/60">/room/{slug}{deckQuery}</span>
+              opens <span className="text-white/60">/room/{makeRoomId(brand.id, slug)}</span>
             </p>
           )}
           <button

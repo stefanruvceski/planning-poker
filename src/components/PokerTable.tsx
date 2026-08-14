@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { DECK_LIST, getDeck } from "@/config/decks";
 import { computeStats } from "@/lib/stats";
 import type { Player, RoomState } from "@/lib/types";
+import type { Brand } from "@/lib/tenant";
 import ChipStack, { chipTone } from "./ChipStack";
 import FeltEmblem from "./FeltEmblem";
 import PlayingCard from "./PlayingCard";
@@ -13,6 +14,8 @@ import StoryBar from "./StoryBar";
 
 interface Props {
   room: RoomState;
+  /** The tenant, for the logo pressed into the felt. */
+  brand: Brand;
   meId: string;
   /** True only for the facilitator - the spectator running the session. */
   canControl: boolean;
@@ -178,6 +181,7 @@ const PAY_AFTER_MS = 1500;
 
 export default function PokerTable({
   room,
+  brand,
   meId,
   canControl,
   showResults,
@@ -256,7 +260,7 @@ export default function PokerTable({
       {/* Rail + felt: stadium shape, like a real poker table */}
       <div className="rail absolute inset-x-[7%] inset-y-[14%] rounded-full p-3">
         <div className="felt relative flex h-full w-full items-center justify-center rounded-full">
-          <FeltEmblem />
+          <FeltEmblem brand={brand} />
 
           {/* Table centre */}
           <div className="relative flex flex-col items-center gap-1.5 text-center sm:gap-2">

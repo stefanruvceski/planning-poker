@@ -3,38 +3,43 @@
 import { useEffect, useState } from "react";
 import { supabase } from "./supabase";
 
+/** A seat counts as "here" if it heartbeat within this window (matches useRoom). */
+const FRESH_MS = 40_000;
+
 /**
- * How many people are sitting at each of the given rooms, for the lobby.
- *
- * The trick is that this subscribes to each room channel but never calls
- * `track()`, so the observer does not show up as a phantom occupant - it only
- * reads the presences the real players published. One key is one person, so the
- * count is the number of distinct presence keys.
+ * How many people are currently sitting at each room of a brand, for the lobby
+ * head counts. Reads the participants table (RLS scopes it to the caller's
+ * brand) and counts seats with a recent heartbeat, keyed by full room id. Polled
+ * on a short interval - the lobby is not a hot path.
  */
-export function usePresenceCounts(roomIds: readonly string[]): Record<string, number> {
+export function useRoomCounts(brandId: string | undefined): Record<string, number> {
   const [counts, setCounts] = useState<Record<string, number>>({});
-  // A stable key so the effect re-runs only when the set of rooms actually changes.
-  const key = roomIds.join(",");
 
   useEffect(() => {
-    const ids = key ? key.split(",") : [];
-    const channels = ids.map((id) => {
-      const ch = supabase.channel(`room:${id}`, {
-        // No presence key of our own: we watch, we do not take a seat.
-        config: { presence: {} },
-      });
-      ch.on("presence", { event: "sync" }, () => {
-        const heads = Object.keys(ch.presenceState()).length;
-        setCounts((prev) => (prev[id] === heads ? prev : { ...prev, [id]: heads }));
-      });
-      ch.subscribe();
-      return ch;
-    });
+    if (!brandId) return;
+    let active = true;
 
-    return () => {
-      channels.forEach((ch) => void supabase.removeChannel(ch));
+    const load = async () => {
+      const { data } = await supabase
+        .from("participants")
+        .select("room_id, last_seen")
+        .eq("brand_id", brandId);
+      if (!active || !data) return;
+      const cutoff = Date.now() - FRESH_MS;
+      const next: Record<string, number> = {};
+      for (const row of data as { room_id: string; last_seen: string }[]) {
+        if (Date.parse(row.last_seen) >= cutoff) next[row.room_id] = (next[row.room_id] ?? 0) + 1;
+      }
+      setCounts(next);
     };
-  }, [key]);
+
+    void load();
+    const t = setInterval(load, 5000);
+    return () => {
+      active = false;
+      clearInterval(t);
+    };
+  }, [brandId]);
 
   return counts;
 }
