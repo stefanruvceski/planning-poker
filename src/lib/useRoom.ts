@@ -62,11 +62,9 @@ interface Round {
   deadline: number | null;
 }
 
-/** How often each client marks itself alive, and how long since the last mark
- *  before a seat is treated as gone. Presence used to do this for us; now that
- *  the roster lives in the database, a heartbeat + TTL takes its place. */
+/** How often each client marks itself alive (server stamps the time and sweeps
+ *  quiet seats - see the heartbeat() RPC and the 40s window there). */
 const HEARTBEAT_MS = 12_000;
-const ONLINE_TTL_MS = 40_000;
 
 /** Reconcile straight from the database this often, as a safety net under the
  *  realtime stream: even if a change event is missed or delayed, the table
@@ -107,8 +105,6 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
   const [revealedVotes, setRevealedVotes] = useState<Map<string, string>>(new Map());
   /** The rev the revealed votes belong to, so we only show them for this round. */
   const [revealedRev, setRevealedRev] = useState(-1);
-  /** Bumped by the heartbeat tick so the online filter re-evaluates over time. */
-  const [, setTick] = useState(0);
   /** Last database error, surfaced in the debug panel so a failing write (RLS,
    *  a missing migration) is visible instead of silently swallowed. */
   const [dbError, setDbError] = useState<string | null>(null);
@@ -229,13 +225,14 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
     [roomId]
   );
 
-  /** Rebuild the visible player list from the roster, dropping seats whose last
-   *  heartbeat is older than the TTL (a closed tab that never got to clean up). */
+  /** Rebuild the visible player list from the roster. Freshness is NOT judged
+   *  here: the server sweeps quiet seats in heartbeat() using its own clock, so
+   *  whatever rows we hold are current. Comparing last_seen to this browser's
+   *  clock was the bug - a skewed clock hid live players or swept them. */
   const rebuildPlayers = useCallback(() => {
-    const cutoff = nowMs() - ONLINE_TTL_MS;
-    const live = [...roster.current.values()]
-      .filter((p) => Date.parse(p.last_seen) >= cutoff || p.player_id === me?.id)
-      .sort((a, b) => Date.parse(a.joined_at) - Date.parse(b.joined_at));
+    const live = [...roster.current.values()].sort(
+      (a, b) => Date.parse(a.joined_at) - Date.parse(b.joined_at)
+    );
     const hostId = live[0]?.player_id;
     const r = round.current.rev;
     const showing = round.current.revealed && revealedRev === r;
@@ -297,7 +294,7 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
     }
   }, [revealed, rev, loadRevealed]);
 
-  // Roster/round changes and the online-TTL tick all feed the visible list.
+  // Roster and round changes feed the visible list.
   useEffect(() => {
     rebuildPlayers();
   }, [rebuildPlayers, revealed, rev]);
@@ -328,7 +325,9 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
         .from("rooms")
         .upsert({ id: roomId, deck_id: round.current.deckId, brand_id: brandId }, { onConflict: "id", ignoreDuplicates: true });
       note("create room", room.error);
-      // Omit chips / joined_at so a refresh keeps them; last_seen marks us alive.
+      // Omit chips / joined_at so a refresh keeps them. last_seen is left to the
+      // column default (now(), server clock) on insert; heartbeat() refreshes it
+      // right after - never a browser clock, which is what caused the skew bug.
       const seat = await supabase.from("participants").upsert(
         {
           room_id: roomId,
@@ -337,26 +336,17 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
           name: me.name,
           avatar_seed: me.avatarSeed,
           role: me.role,
-          last_seen: iso(),
         },
         { onConflict: "room_id,player_id" }
       );
       note("take seat", seat.error);
+      await heartbeat(); // stamp last_seen in server time straight away
     };
 
-    /** Mark myself alive and sweep out seats that stopped marking themselves. */
+    /** Mark myself alive and sweep quiet seats - both in server time, in one RPC. */
     const heartbeat = async () => {
-      await supabase
-        .from("participants")
-        .update({ last_seen: iso() })
-        .eq("room_id", roomId)
-        .eq("player_id", me.id);
-      await supabase
-        .from("participants")
-        .delete()
-        .eq("room_id", roomId)
-        .lt("last_seen", new Date(nowMs() - ONLINE_TTL_MS).toISOString());
-      setTick((t) => t + 1); // re-evaluate the online filter locally too
+      const res = await supabase.rpc("heartbeat", { p_room_id: roomId });
+      note("heartbeat", res.error);
     };
 
     const applyParticipantChange = (payload: {
@@ -507,7 +497,7 @@ export function useRoom(roomId: string, me: Identity | null, brandId: string) {
         // changes" case, and it would never surface as an error.
         const p = await supabase
           .from("participants")
-          .update({ has_voted: !clearing, voted_rev: r, last_seen: iso() })
+          .update({ has_voted: !clearing, voted_rev: r })
           .eq("room_id", roomId)
           .eq("player_id", me.id)
           .select();
