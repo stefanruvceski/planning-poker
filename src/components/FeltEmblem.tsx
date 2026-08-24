@@ -9,14 +9,14 @@ import type { Brand } from "@/lib/tenant";
  */
 export default function FeltEmblem({ brand }: { brand?: Brand }) {
   if (brand?.logo_url) {
+    const mask = { WebkitMaskImage: `url("${brand.logo_url}")`, maskImage: `url("${brand.logo_url}")` };
+    // Two masked layers - a dark recess and a light lip nudged down - so the
+    // brand mark is stamped into the felt exactly like the default emblem,
+    // colourless, rather than laid on top as a flat coloured image.
     return (
-      <div className="pointer-events-none absolute left-1/2 top-1/2 h-[38%] -translate-x-1/2 -translate-y-1/2">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={brand.logo_url}
-          alt=""
-          className="h-full w-auto object-contain opacity-25 mix-blend-luminosity"
-        />
+      <div className="pointer-events-none absolute left-1/2 top-1/2 aspect-square h-[38%] -translate-x-1/2 -translate-y-1/2">
+        <div className="felt-emblem-mask-lip" style={mask} />
+        <div className="felt-emblem-mask" style={mask} />
       </div>
     );
   }
