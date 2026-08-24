@@ -104,6 +104,31 @@ a,
   transform: translateY(2px);
 }
 
+/* A brand's own logo, engraved the same two-tone way: the logo's shape is used
+   as a mask over the felt's recess/lip colours, so any image (a data-URI R, an
+   uploaded mark) reads as woven into the cloth instead of a flat coloured decal.
+   Colour is dropped on purpose - the felt tints it, not the brand. */
+.felt-emblem-mask,
+.felt-emblem-mask-lip {
+  position: absolute;
+  inset: 0;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}
+.felt-emblem-mask {
+  background-color: #06210f;
+  opacity: 0.34;
+}
+.felt-emblem-mask-lip {
+  background-color: #bdf0cf;
+  opacity: 0.16;
+  transform: translateY(2px);
+}
+
 /* ---- Cards ---- */
 .card-back {
   background-image: repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.17) 0 2px, transparent 2px 7px),
