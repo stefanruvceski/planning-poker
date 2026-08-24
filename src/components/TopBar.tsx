@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import LogoMark from "./LogoMark";
+import BrandLogo from "./BrandLogo";
+import type { Brand } from "@/lib/tenant";
 
 interface Props {
+  brand: Brand;
   roomName: string;
   deckName: string;
   playerCount: number;
@@ -14,7 +16,7 @@ interface Props {
   onShowRecap: () => void;
 }
 
-export default function TopBar({ roomName, deckName, playerCount, connected, recapCount, onShowRecap }: Props) {
+export default function TopBar({ brand, roomName, deckName, playerCount, connected, recapCount, onShowRecap }: Props) {
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -51,11 +53,8 @@ export default function TopBar({ roomName, deckName, playerCount, connected, rec
   return (
     <header className="flex h-14 items-center justify-between border-b border-black/60 bg-gradient-to-b from-[#2b3140] to-[#171b24] px-4 shadow-lg">
       <Link href="/" className="flex items-center gap-3 transition hover:opacity-80" title="Back to lobby">
-        <LogoMark className="h-7 w-7 shrink-0 text-[#e9453c]" />
-        <div className="leading-none">
-          <span className="text-xl font-extrabold tracking-tight text-red-500">planning</span>
-          <span className="text-xl font-extrabold tracking-tight text-white">poker</span>
-        </div>
+        <BrandLogo brand={brand} className="h-7 w-7 shrink-0" />
+        <div className="text-xl font-extrabold tracking-tight text-white leading-none">{brand.name}</div>
       </Link>
 
       <div className="hidden items-center gap-4 text-sm text-white/70 sm:flex">

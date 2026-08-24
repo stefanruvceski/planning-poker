@@ -23,6 +23,9 @@ const globalForSupabase = globalThis as unknown as { __ppSupabase?: SupabaseClie
 export const supabase =
   globalForSupabase.__ppSupabase ??
   (globalForSupabase.__ppSupabase = createClient(url, key, {
-    auth: { persistSession: false },
+    // The app requires login now: keep the session so a refresh stays signed in,
+    // refresh the token in the background, and pick up the magic-link session
+    // from the URL when the user lands back on the page.
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
     realtime: { params: { eventsPerSecond: 20 } },
   }));

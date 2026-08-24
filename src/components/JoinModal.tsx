@@ -6,16 +6,21 @@ import type { PlayerRole } from "@/lib/types";
 
 interface Props {
   roomName: string;
+  /** Prefill from the signed-in profile so the name/avatar carry across rooms. */
+  initialName?: string;
+  initialAvatarSeed?: string;
   onJoin: (data: { name: string; role: PlayerRole; avatarSeed: string }) => void;
 }
 
-export default function JoinModal({ roomName, onJoin }: Props) {
-  const [name, setName] = useState("");
+export default function JoinModal({ roomName, initialName = "", initialAvatarSeed = "", onJoin }: Props) {
+  const [name, setName] = useState(initialName);
   const [spectator, setSpectator] = useState(false);
   // Seed is generated on the client only - otherwise SSR and client render
   // different avatars and React reports a hydration mismatch.
-  const [seed, setSeed] = useState("");
-  useEffect(() => setSeed(randomSeed()), []);
+  const [seed, setSeed] = useState(initialAvatarSeed);
+  useEffect(() => {
+    if (!initialAvatarSeed) setSeed(randomSeed());
+  }, [initialAvatarSeed]);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
