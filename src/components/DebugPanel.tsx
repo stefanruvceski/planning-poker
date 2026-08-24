@@ -4,7 +4,7 @@ import type { Player } from "@/lib/types";
 
 /** Bumped on each debug-related deploy, shown in the panel, so a screenshot
  *  tells us whether the running bundle is the latest one. */
-const BUILD = "mt-1";
+const BUILD = "mt-2";
 
 interface Props {
   meId: string;
