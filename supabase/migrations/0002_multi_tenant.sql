@@ -6,12 +6,13 @@
 --
 -- Model:
 --   brands         - one row per company (id 'tma', name, logo, teams[]).
---   brand_members  - the invite list: which email belongs to which brand.
---   profiles       - one row per logged-in user: their brand + display name/avatar.
+--   brand_members  - the invite list AND the user<->brand link: which email
+--                    belongs to which brand. This is the single source of truth.
+--   profiles       - one row per logged-in user: display name/avatar only.
 --   rooms/participants/votes gain a brand_id and are locked to the caller's brand.
 --
--- A user's brand is resolved from their profile (current_brand()); everything
--- they can see or touch is scoped to it.
+-- A user's brand is resolved live from brand_members by their email
+-- (current_brand()); everything they can see or touch is scoped to it.
 
 -- ------------------------------------------------------------------ tables ---
 
@@ -31,10 +32,12 @@ create table if not exists public.brand_members (
   created_at timestamptz not null default now()
 );
 
--- One row per authenticated user.
+-- One row per authenticated user. Holds only display prefs - the user's brand
+-- is NOT copied here; it is resolved live from brand_members (the invite list)
+-- via current_brand(), so an admin's change to the invite list takes effect on
+-- the next login instead of being frozen into a stale copy.
 create table if not exists public.profiles (
   user_id      uuid primary key references auth.users(id) on delete cascade,
-  brand_id     text references public.brands(id),
   display_name text,
   avatar_seed  text,
   created_at   timestamptz not null default now()
@@ -49,8 +52,9 @@ create index if not exists participants_brand_idx on public.participants (brand_
 
 -- --------------------------------------------------------------- functions ---
 
--- The caller's brand, from their profile. security definer so RLS policies can
--- call it without needing a policy on profiles for the lookup itself.
+-- The caller's brand, resolved LIVE from the invite list (brand_members) by the
+-- email in their JWT - the linking table is the single source of truth, so there
+-- is no stale copy to drift. security definer so RLS policies can call it.
 create or replace function public.current_brand()
 returns text
 language sql
@@ -58,12 +62,13 @@ stable
 security definer
 set search_path = public
 as $$
-  select brand_id from public.profiles where user_id = auth.uid();
+  select brand_id from public.brand_members
+  where email = lower(auth.jwt() ->> 'email');
 $$;
 
--- Called once after login: create the caller's profile if absent, binding it to
--- whatever brand invited their email. Returns the resolved brand_id (or null if
--- the email was never invited). Safe to call repeatedly - it only fills gaps.
+-- Called after login: ensure the caller has a profile row (display name/avatar),
+-- and return their brand from the invite list. It does NOT store the brand - that
+-- stays in brand_members. Safe to call repeatedly; it only fills blank prefs.
 create or replace function public.bootstrap_profile(p_display_name text, p_avatar_seed text)
 returns text
 language plpgsql
@@ -72,20 +77,14 @@ set search_path = public
 as $$
 declare
   v_email text := lower(coalesce(auth.jwt() ->> 'email', ''));
-  v_invited text;
 begin
-  select brand_id into v_invited from public.brand_members where email = v_email;
-
-  insert into public.profiles (user_id, brand_id, display_name, avatar_seed)
-  values (auth.uid(), v_invited, p_display_name, p_avatar_seed)
+  insert into public.profiles (user_id, display_name, avatar_seed)
+  values (auth.uid(), p_display_name, p_avatar_seed)
   on conflict (user_id) do update
-    -- keep whatever the user already has; only fill blanks (and bind the brand
-    -- if it wasn't set yet). Profile edits go through a direct update, not here.
     set display_name = coalesce(public.profiles.display_name, nullif(excluded.display_name, '')),
-        avatar_seed  = coalesce(public.profiles.avatar_seed,  nullif(excluded.avatar_seed, '')),
-        brand_id     = coalesce(public.profiles.brand_id, excluded.brand_id);
+        avatar_seed  = coalesce(public.profiles.avatar_seed,  nullif(excluded.avatar_seed, ''));
 
-  return (select brand_id from public.profiles where user_id = auth.uid());
+  return (select brand_id from public.brand_members where email = v_email);
 end;
 $$;
 
