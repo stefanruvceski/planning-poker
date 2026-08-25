@@ -129,10 +129,17 @@ function Splash({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Magic-link login: enter an email, get a one-time link, land back signed in. */
+/**
+ * Login: enter an email, then either click the link OR type the 6-digit code
+ * from the same email. The code path matters because corporate mail scanners
+ * (Outlook / Microsoft Safe Links) pre-open the magic link and burn the
+ * one-time token before the user clicks - a typed code can't be consumed that
+ * way, so it works where the link doesn't.
+ */
 function LoginScreen() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -151,6 +158,22 @@ function LoginScreen() {
     else setSent(true);
   };
 
+  const verify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const token = code.trim();
+    if (token.length < 6) return;
+    setBusy(true);
+    setError(null);
+    // On success onAuthStateChange fires and the provider takes over.
+    const { error } = await supabase.auth.verifyOtp({
+      email: email.trim().toLowerCase(),
+      token,
+      type: "email",
+    });
+    setBusy(false);
+    if (error) setError(error.message);
+  };
+
   return (
     <main className="flex h-[100dvh] items-center justify-center px-4">
       <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 text-center shadow-2xl">
@@ -159,10 +182,38 @@ function LoginScreen() {
           <span className="text-white">poker</span>
         </h1>
         {sent ? (
-          <p className="mt-6 text-sm text-white/70">
-            Check <span className="font-semibold text-white">{email}</span> — we sent a sign-in link.
-            Open it on this device.
-          </p>
+          <>
+            <p className="mt-6 text-sm text-white/70">
+              We sent a link and a 6-digit code to <span className="font-semibold text-white">{email}</span>.
+              Click the link, or enter the code:
+            </p>
+            <form onSubmit={verify} className="mt-4 flex flex-col gap-3">
+              <input
+                autoFocus
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                value={code}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="123456"
+                className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center text-lg tracking-[0.3em] outline-none focus:border-gold"
+              />
+              {error && <p className="text-xs text-red-400">{error}</p>}
+              <button
+                type="submit"
+                disabled={busy || code.length < 6}
+                className="w-full rounded-lg bg-gold py-3 font-extrabold text-black transition hover:brightness-110 active:scale-95 disabled:opacity-40"
+              >
+                {busy ? "Verifying…" : "Verify code"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setSent(false); setCode(""); setError(null); }}
+                className="text-xs text-white/45 underline transition hover:text-white"
+              >
+                use a different email
+              </button>
+            </form>
+          </>
         ) : (
           <form onSubmit={send} className="mt-6 flex flex-col gap-3">
             <p className="text-sm text-white/50">Sign in with your work email.</p>
@@ -180,7 +231,7 @@ function LoginScreen() {
               disabled={busy || !email.trim()}
               className="w-full rounded-lg bg-gold py-3 font-extrabold text-black transition hover:brightness-110 active:scale-95 disabled:opacity-40"
             >
-              {busy ? "Sending…" : "Send magic link"}
+              {busy ? "Sending…" : "Send sign-in email"}
             </button>
           </form>
         )}
