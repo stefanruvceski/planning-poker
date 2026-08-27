@@ -13,10 +13,10 @@ export interface Brand {
   teams: string[];
 }
 
-/** The signed-in user's profile row. */
+/** The signed-in user's profile row (display prefs only; brand lives in
+ *  brand_members and is resolved live). */
 export interface Profile {
   user_id: string;
-  brand_id: string | null;
   display_name: string | null;
   avatar_seed: string | null;
 }
@@ -85,7 +85,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       }
       const [{ data: brand }, { data: profile }] = await Promise.all([
         supabase.from("brands").select("id, name, logo_url, teams").eq("id", brandId).maybeSingle(),
-        supabase.from("profiles").select("user_id, brand_id, display_name, avatar_seed").eq("user_id", session.user.id).maybeSingle(),
+        supabase.from("profiles").select("user_id, display_name, avatar_seed").eq("user_id", session.user.id).maybeSingle(),
       ]);
       if (cancelled) return;
       if (!brand || !profile) {
