@@ -112,6 +112,29 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     [session]
   );
 
+  // Reflect the tenant in the browser tab: the brand's logo as the favicon and
+  // its name in the title. A brand with no logo keeps the default app icon
+  // (app/icon.svg). Cleaned up on sign-out / brand change so the default returns.
+  useEffect(() => {
+    if (phase.step !== "ready") return;
+    const prevTitle = document.title;
+    document.title = `${phase.brand.name} · Planning Poker`;
+    let link: HTMLLinkElement | null = null;
+    const href = phase.brand.logo_url;
+    if (href) {
+      link = document.createElement("link");
+      link.rel = "icon";
+      link.type = href.startsWith("data:image/svg") ? "image/svg+xml" : "image/png";
+      link.href = href;
+      // Appended last, so browsers use it over the static default icon.
+      document.head.appendChild(link);
+    }
+    return () => {
+      document.title = prevTitle;
+      link?.remove();
+    };
+  }, [phase]);
+
   if (phase.step === "loading") return <Splash>Loading…</Splash>;
   if (phase.step === "signedOut") return <LoginScreen />;
   if (phase.step === "notInvited") return <NotInvited email={phase.email} onSignOut={signOut} />;
