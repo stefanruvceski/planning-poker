@@ -119,19 +119,29 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     if (phase.step !== "ready") return;
     const prevTitle = document.title;
     document.title = `${phase.brand.name} · Planning Poker`;
-    let link: HTMLLinkElement | null = null;
+
     const href = phase.brand.logo_url;
+    let restore: (() => void) | undefined;
     if (href) {
-      link = document.createElement("link");
+      // Swap the favicon by REMOVING the icon links Next rendered and adding a
+      // fresh one - just appending another link doesn't reliably override the
+      // existing icon, and removing + re-adding forces the browser to refetch.
+      const prevIcons = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'));
+      prevIcons.forEach((el) => el.remove());
+      const link = document.createElement("link");
       link.rel = "icon";
       link.type = href.startsWith("data:image/svg") ? "image/svg+xml" : "image/png";
       link.href = href;
-      // Appended last, so browsers use it over the static default icon.
       document.head.appendChild(link);
+      restore = () => {
+        link.remove();
+        prevIcons.forEach((el) => document.head.appendChild(el));
+      };
     }
+
     return () => {
       document.title = prevTitle;
-      link?.remove();
+      restore?.();
     };
   }, [phase]);
 
