@@ -1,4 +1,4 @@
-import LogoMark from "./LogoMark";
+import AppMark from "./AppMark";
 import type { Brand } from "@/lib/tenant";
 
 /**
@@ -16,5 +16,5 @@ export default function BrandLogo({ brand, className = "" }: { brand: Brand; cla
       />
     );
   }
-  return <LogoMark className={`text-[#e9453c] ${className}`} />;
+  return <AppMark className={`text-[#e8c15a] ${className}`} />;
 }
