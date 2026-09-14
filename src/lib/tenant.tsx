@@ -43,6 +43,7 @@ type Phase =
   | { step: "loading" }
   | { step: "signedOut" }
   | { step: "notInvited"; email: string }
+  | { step: "needCode" }
   | { step: "ready"; brand: Brand; profile: Profile };
 
 /**
@@ -54,6 +55,9 @@ type Phase =
 export function TenantProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null | undefined>(undefined);
   const [phase, setPhase] = useState<Phase>({ step: "loading" });
+  // Bumped to force a brand re-resolution without a fresh sign-in - e.g. right
+  // after a guest binds themselves with a team code.
+  const [resolveNonce, setResolveNonce] = useState(0);
 
   // Track the auth session (and the magic-link one detected on the URL).
   useEffect(() => {
@@ -80,7 +84,9 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
       });
       if (cancelled) return;
       if (error || !brandId) {
-        setPhase({ step: "notInvited", email });
+        // An anonymous (guest) session has no email invite to fall back on, so
+        // send them to the team-code screen instead of the "not invited" notice.
+        setPhase(session.user.is_anonymous ? { step: "needCode" } : { step: "notInvited", email });
         return;
       }
       const [{ data: brand }, { data: profile }] = await Promise.all([
@@ -97,7 +103,7 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session]);
+  }, [session, resolveNonce]);
 
   const signOut = useCallback(async () => {
     await supabase.auth.signOut();
@@ -147,6 +153,8 @@ export function TenantProvider({ children }: { children: React.ReactNode }) {
 
   if (phase.step === "loading") return <Splash>Loading…</Splash>;
   if (phase.step === "signedOut") return <LoginScreen />;
+  if (phase.step === "needCode")
+    return <BrandCodeScreen onJoined={() => setResolveNonce((n) => n + 1)} onSignOut={signOut} />;
   if (phase.step === "notInvited") return <NotInvited email={phase.email} onSignOut={signOut} />;
 
   return (
@@ -203,6 +211,16 @@ function LoginScreen() {
       token,
       type: "email",
     });
+    setBusy(false);
+    if (error) setError(error.message);
+  };
+
+  // For people whose company mail blocks the sign-in email outright: start an
+  // anonymous session, then the provider asks for a brand + team code.
+  const guest = async () => {
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.auth.signInAnonymously();
     setBusy(false);
     if (error) setError(error.message);
   };
@@ -266,8 +284,108 @@ function LoginScreen() {
             >
               {busy ? "Sending…" : "Send sign-in email"}
             </button>
+            <div className="mt-2 flex items-center gap-3 text-[11px] uppercase tracking-wider text-white/30">
+              <span className="h-px flex-1 bg-white/10" />
+              or
+              <span className="h-px flex-1 bg-white/10" />
+            </div>
+            <button
+              type="button"
+              onClick={guest}
+              disabled={busy}
+              className="w-full rounded-lg border border-white/10 bg-black/40 py-2.5 text-sm font-semibold text-white/80 transition hover:bg-black/60 active:scale-95 disabled:opacity-40"
+            >
+              Join with a team code
+            </button>
+            <p className="text-[11px] text-white/35">
+              No email needed — use the code your team shared with you.
+            </p>
           </form>
         )}
+      </div>
+    </main>
+  );
+}
+
+/**
+ * Guest path: bind an anonymous session to a brand by its shared team code, for
+ * users whose company mail never delivers the sign-in email. The code is checked
+ * server-side by join_with_code (the code itself is never sent to the browser);
+ * on a match the caller is bound to the brand and the provider re-resolves.
+ */
+function BrandCodeScreen({ onJoined, onSignOut }: { onJoined: () => void; onSignOut: () => void }) {
+  const [brandId, setBrandId] = useState("");
+  const [code, setCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const join = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const id = brandId.trim().toLowerCase();
+    const secret = code.trim();
+    if (!id || !secret) return;
+    setBusy(true);
+    setError(null);
+    const { data, error } = await supabase.rpc("join_with_code", {
+      p_brand_id: id,
+      p_code: secret,
+    });
+    setBusy(false);
+    if (error) {
+      setError(error.message);
+      return;
+    }
+    if (!data) {
+      setError("That team or code doesn't match. Check both and try again.");
+      return;
+    }
+    onJoined();
+  };
+
+  return (
+    <main className="flex h-[100dvh] items-center justify-center px-4">
+      <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-gradient-to-b from-[#252b38] to-[#151922] p-6 text-center shadow-2xl">
+        <h1 className="text-2xl font-extrabold tracking-tight">
+          <span className="text-red-500">planning</span>
+          <span className="text-white">poker</span>
+        </h1>
+        <p className="mt-6 text-sm text-white/60">
+          Enter your team&rsquo;s name and the code they shared with you.
+        </p>
+        <form onSubmit={join} className="mt-4 flex flex-col gap-3">
+          <input
+            autoFocus
+            value={brandId}
+            onChange={(e) => setBrandId(e.target.value)}
+            placeholder="team"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center outline-none focus:border-gold"
+          />
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="team code"
+            autoCapitalize="none"
+            autoCorrect="off"
+            className="w-full rounded-lg border border-white/10 bg-black/40 px-3 py-2.5 text-center tracking-wider outline-none focus:border-gold"
+          />
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button
+            type="submit"
+            disabled={busy || !brandId.trim() || !code.trim()}
+            className="w-full rounded-lg bg-gold py-3 font-extrabold text-black transition hover:brightness-110 active:scale-95 disabled:opacity-40"
+          >
+            {busy ? "Joining…" : "Join table"}
+          </button>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="text-xs text-white/45 underline transition hover:text-white"
+          >
+            use email instead
+          </button>
+        </form>
       </div>
     </main>
   );
