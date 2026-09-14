@@ -33,6 +33,10 @@ create extension if not exists pgcrypto with schema extensions;
 alter table public.brands    add column if not exists join_code_hash text;
 alter table public.profiles  add column if not exists brand_id text references public.brands(id);
 
+-- An earlier draft of this migration stored the code in plaintext as
+-- `join_code`. Drop it if it's still around, so nothing keeps a raw code.
+alter table public.brands    drop column if exists join_code;
+
 -- --------------------------------------------------------------- functions ---
 
 -- The caller's brand: their email invite (brand_members) if any, otherwise their
