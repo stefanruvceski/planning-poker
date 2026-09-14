@@ -19,6 +19,8 @@
 --                        still comes from brand_members (the invite list); this
 --                        column is only the fallback for code-joined guests.
 --   current_brand()    - now coalesce(invite list, guest binding), invite wins.
+--   bootstrap_profile()- now returns current_brand() (so a guest's code binding
+--                        counts), not just the email invite.
 --   set_join_code()    - hash and store a brand's code (run in the SQL editor).
 --   join_with_code()   - verify brand+code, bind the caller, return the brand.
 --
@@ -53,6 +55,27 @@ as $$
     (select brand_id from public.brand_members where email = lower(auth.jwt() ->> 'email')),
     (select brand_id from public.profiles where user_id = auth.uid())
   );
+$$;
+
+-- Called after login: ensure the caller has a profile row and return their brand.
+-- Now returns current_brand() (0002 returned the email invite directly), so a
+-- guest bound by a team code - who has no email invite - still resolves to their
+-- brand through the profiles.brand_id fallback. Only fills blank display prefs.
+create or replace function public.bootstrap_profile(p_display_name text, p_avatar_seed text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.profiles (user_id, display_name, avatar_seed)
+  values (auth.uid(), p_display_name, p_avatar_seed)
+  on conflict (user_id) do update
+    set display_name = coalesce(public.profiles.display_name, nullif(excluded.display_name, '')),
+        avatar_seed  = coalesce(public.profiles.avatar_seed,  nullif(excluded.avatar_seed, ''));
+
+  return public.current_brand();
+end;
 $$;
 
 -- Set (or clear) a brand's join code. Pass the PLAINTEXT code; it is bcrypt-hashed
